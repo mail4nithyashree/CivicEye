@@ -265,6 +265,23 @@ function decodeImageBuffer(buffer) {
       data: rawData.data, // RGBA Uint8Array
     };
   } catch (err) {
+    // Fallback for WebP / BMP / miscellaneous formats via PIL decoder
+    try {
+      const { execFileSync } = require('child_process');
+      const pyScript = path.join(__dirname, 'scripts', 'decode_image.py');
+      if (fs.existsSync(pyScript)) {
+        const rawBytes = execFileSync('python', [pyScript], { input: buffer, maxBuffer: 50 * 1024 * 1024 });
+        const w = rawBytes.readUInt32LE(0);
+        const h = rawBytes.readUInt32LE(4);
+        return {
+          width: w,
+          height: h,
+          data: new Uint8Array(rawBytes.buffer, rawBytes.byteOffset + 8, w * h * 4),
+        };
+      }
+    } catch (pyErr) {
+      // Fall through to error
+    }
     throw new Error('Failed to decode image buffer: ' + err.message);
   }
 }
@@ -356,6 +373,7 @@ const ROAD_AND_INFRASTRUCTURE_CLASSES = new Set([
   867, // trailer truck
   874, // tricycle
   // Traffic and civic infrastructure
+  421, // street sign / post
   440, // barrier, guard rail
   443, // beacon, lighthouse, tower
   460, // breakwater, seawall, concrete barrier
@@ -366,30 +384,72 @@ const ROAD_AND_INFRASTRUCTURE_CLASSES = new Set([
   919, // street sign
   920, // traffic light
   // Terrain textures often corresponding to road surfaces / asphalt / earth
+  970, // alp
+  971, // bubble / asphalt texture
+  972, // cliff
   974, // cliff, drop-off, gravel edge
   975, // lakeshore
+  976, // promontory
   977, // sandbar, spit
   978, // seashore, coast
   979, // valley
   980, // volcano, ash, rocky asphalt, slag
+  // Pavement crack and grid textures in ImageNet
+  489, // chainlink fence (alligator crack hexagonal mesh)
+  539, // doormat (pavement grid)
+  599, // honeycomb (crack polygon)
+  640, // manhole (utility frame)
+  825, // stone wall (macadam / paving stones)
+  858, // tile roof (polygonal cracking blocks)
 ]);
 
-// Plant / Flower / Flora related classes
+// Plant / Flower / Flora & Insect related classes
 const FLOWER_PLANT_CLASSES = new Set([
-  738, // pot, flowerpot
-  899, // vase
-  883, // urn / vase
-  723, // pinwheel (decorative garden)
+  309, // bee / honeybee (common on garden flower closeups)
+  323, // monarch butterfly
+  325, // sulphur butterfly
   580, // greenhouse, nursery
+  723, // pinwheel (decorative garden)
+  738, // pot, flowerpot
+  883, // urn / vase
+  899, // vase
   984, // rapeseed
   985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998,
 ]);
 
-// Explicit Indoor & Office items
+// Food, Produce & Domestic Fruit classes (ImageNet 923..969)
+const FOOD_PRODUCE_CLASSES = new Set([
+  923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933, 934, 935, 936, 937, 938, 939,
+  940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956,
+  957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969
+]);
+
+// Person & Apparel classes
+const APPAREL_PEOPLE_CLASSES = new Set([
+  400, // academic gown
+  401, // accordion / instrument
+  402, // acoustic guitar
+  434, // bath towel
+  435, // bathing cap
+  515, // cowboy hat
+  568, // fur coat
+  617, // lab coat
+  639, // maillot
+  655, // miniskirt
+  724, // pirate / costume
+  834, // suit
+  836, // sunglasses
+  842, // swimming trunks
+  869, // trench coat
+  906, // wig
+]);
+
+// Explicit Indoor, Domestic & Office items
 const EXPLICIT_INDOOR_CLASSES = new Set([
-  508, 916, 620, 664, 782, 673, 487, 526, 530, 532, 537, 553, 559, 564, 574, 590, 604, 608, 629, 638,
-  645, 651, 668, 679, 688, 703, 720, 722, 735, 755, 759, 765, 768, 770, 776, 785, 794, 804, 808,
-  831, 834, 846, 852, 854, 857, 859, 861, 898, 900, 903,
+  403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419,
+  487, 508, 526, 530, 532, 537, 553, 559, 564, 574, 590, 604, 608, 620, 629, 638,
+  645, 651, 664, 668, 673, 679, 688, 703, 720, 722, 735, 755, 759, 765, 768, 770,
+  776, 782, 785, 794, 804, 808, 831, 846, 852, 854, 857, 859, 861, 898, 900, 903, 916
 ]);
 
 async function validateRoadPresence(decodedImage) {
@@ -541,11 +601,13 @@ async function validateRoadPresence(decodedImage) {
       const top = indexed[0];
       const top5 = indexed.slice(0, 5);
 
-      const hasRoadInTop5 = top5.some(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i) && item.p > 0.04);
-      if (!hasRoadInTop5) {
+      const roadProb = top5.filter(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+      const hasRoadInTop5 = top5.some(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i) && item.p > 0.03);
+
+      if (!hasRoadInTop5 && roadProb < 0.05) {
         // Check animal classes (0..397)
         const animalProb = top5.filter(item => item.i >= 0 && item.i <= 397).reduce((sum, item) => sum + item.p, 0);
-        if (animalProb > 0.35 || (top.i >= 0 && top.i <= 397 && top.p > 0.20)) {
+        if (animalProb > 0.15 || (top.i >= 0 && top.i <= 397 && top.p > 0.10)) {
           return {
             isRoad: false,
             isClear: true,
@@ -555,20 +617,33 @@ async function validateRoadPresence(decodedImage) {
           };
         }
 
-        // Check indoor classes
-        const indoorProb = top5.filter(item => EXPLICIT_INDOOR_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (indoorProb > 0.35 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.30)) {
+        // Check flower / flora classes
+        const plantProb = top5.filter(item => FLOWER_PLANT_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (plantProb > 0.15 || (FLOWER_PLANT_CLASSES.has(top.i) && top.p > 0.08)) {
           return {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
-            reason: 'Indoor / unrelated object detected',
+            reason: 'Flower / plant detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // Check food / produce classes
+        const foodProb = top5.filter(item => FOOD_PRODUCE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (foodProb > 0.15 || (FOOD_PRODUCE_CLASSES.has(top.i) && top.p > 0.08)) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Food / non-infrastructure object detected',
             message: 'Invalid Image, give valid Issue Image!',
           };
         }
 
         // Check person / apparel classes
-        if (top.i >= 398 && top.i <= 402 && top.p > 0.15) {
+        const apparelProb = top5.filter(item => APPAREL_PEOPLE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (apparelProb > 0.15 || (APPAREL_PEOPLE_CLASSES.has(top.i) && top.p > 0.10)) {
           return {
             isRoad: false,
             isClear: true,
@@ -578,14 +653,36 @@ async function validateRoadPresence(decodedImage) {
           };
         }
 
-        // Check flower / flora classes
-        const plantProb = top5.filter(item => FLOWER_PLANT_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (plantProb > 0.20 || (FLOWER_PLANT_CLASSES.has(top.i) && top.p > 0.10)) {
+        // Check indoor / furniture classes
+        const indoorProb = top5.filter(item => EXPLICIT_INDOOR_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (indoorProb > 0.20 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.15)) {
           return {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
-            reason: 'Flower / plant detected',
+            reason: 'Indoor / unrelated object detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // If low saturation is not predominant, definitively reject non-road scene
+        if (lowSatRatio < 0.40) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Non-road or unrelated image detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // Even with high low-sat, if road probability is negligible and top class is strongly confident non-road
+        if (roadProb < 0.02 && top.p > 0.25) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Non-road or unrelated image detected',
             message: 'Invalid Image, give valid Issue Image!',
           };
         }
@@ -608,11 +705,9 @@ async function validateRoadPresence(decodedImage) {
 // ---------------------------------------------------------------------------
 
 function calibrateConfidence(rawConf, classId) {
-  const thresh = CLASS_CONF_THRESHOLDS[classId] || 0.15;
+  const thresh = CLASS_CONF_THRESHOLDS[classId] || 0.20;
   if (rawConf < thresh) return 0.0;
-  const normalized = (rawConf - thresh) / (1 - thresh);
-  const calibrated = 0.35 + 0.63 * Math.sqrt(normalized);
-  return Math.min(0.99, Math.max(0.30, Math.round(calibrated * 100) / 100));
+  return Math.min(0.99, Math.max(0.20, Math.round(rawConf * 100) / 100));
 }
 
 function preprocessToFloatTensor(decodedImage, targetWidth = 640, targetHeight = 640, padColor = 114) {
@@ -693,16 +788,16 @@ function applyNms(candidates, iouThreshold = IOU_THRESHOLD) {
 }
 
 const CLASS_CONF_THRESHOLDS = {
-  0: 0.02, // Alligator cracking
-  1: 0.02, // Linear cracking
-  2: 0.02, // Pothole
-  3: 0.18, // Manhole defect
-  4: 0.18, // Waterlogging
-  5: 0.18, // Road divider damage
-  6: 0.20, // Damaged traffic sign
-  7: 0.20, // Street light fault
-  8: 0.18, // Debris / road blockage
-  9: 0.18, // Damaged footpath
+  0: 0.20, // Alligator cracking
+  1: 0.20, // Linear cracking
+  2: 0.20, // Pothole
+  3: 0.25, // Manhole defect
+  4: 0.25, // Waterlogging
+  5: 0.25, // Road divider damage
+  6: 0.25, // Damaged traffic sign
+  7: 0.25, // Street light fault
+  8: 0.25, // Debris / road blockage
+  9: 0.25, // Damaged footpath
 };
 
 function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
@@ -730,7 +825,7 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
       }
     }
 
-    const thresh = CLASS_CONF_THRESHOLDS[bestClass] || 0.15;
+    const thresh = CLASS_CONF_THRESHOLDS[bestClass] || 0.20;
 
     if (maxScore >= thresh) {
       // Filter out tiny edge border pad artifacts
@@ -745,10 +840,10 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
       const issueType = CLASS_ID_MAP[bestClass] || `issue_class_${bestClass}`;
       const calConf = calibrateConfidence(maxScore, bestClass);
       const bBox = {
-        x: cx / MODEL_INPUT_WIDTH,
-        y: cy / MODEL_INPUT_HEIGHT,
-        width: w / MODEL_INPUT_WIDTH,
-        height: h / MODEL_INPUT_HEIGHT,
+        x: Math.max(0, Math.min(1, cx / MODEL_INPUT_WIDTH)),
+        y: Math.max(0, Math.min(1, cy / MODEL_INPUT_HEIGHT)),
+        width: Math.max(0, Math.min(1, w / MODEL_INPUT_WIDTH)),
+        height: Math.max(0, Math.min(1, h / MODEL_INPUT_HEIGHT)),
       };
 
       candidates.push({
@@ -765,92 +860,6 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
 
   return applyNms(candidates, iouThreshold);
 }
-
-// Multi-class Domain Saliency Fallback Detector for 10 Civic Classes
-function detectDomainDefects(decodedImage) {
-  const { width, height, data } = decodedImage;
-  const detections = [];
-
-  let darkRoadPatchCount = 0;
-  let brightReflectCount = 0;
-  let lowSatCount = 0;
-  let totalSampled = 0;
-
-  let minX = width, maxX = 0, minY = height, maxY = 0;
-
-  const startY = Math.floor(height * 0.25);
-  for (let y = startY; y < height; y += 4) {
-    for (let x = 0; x < width; x += 4) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-      const [h, s, l] = rgbToHsl(r, g, b);
-      totalSampled++;
-
-      if (s < 0.28) lowSatCount++;
-      if (lum < 0.22 && s < 0.35) {
-        darkRoadPatchCount++;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-      if (lum > 0.70 && s < 0.30) brightReflectCount++;
-    }
-  }
-
-  const darkRatio = darkRoadPatchCount / (totalSampled || 1);
-  const reflectRatio = brightReflectCount / (totalSampled || 1);
-  const lowSatRatio = lowSatCount / (totalSampled || 1);
-
-  // If asphalt road surface with localized depression/patch or water reflection
-  if (lowSatRatio > 0.35) {
-    const boxW = Math.max(0.2, Math.min(0.7, (maxX - minX) / width || 0.45));
-    const boxH = Math.max(0.18, Math.min(0.6, (maxY - minY) / height || 0.35));
-    const boxX = Math.max(0.15, Math.min(0.85, ((minX + maxX) / 2) / width || 0.5));
-    const boxY = Math.max(0.35, Math.min(0.85, ((minY + maxY) / 2) / height || 0.6));
-
-    const bBox = { x: boxX, y: boxY, width: boxW, height: boxH };
-
-    if (reflectRatio > 0.08 && darkRatio > 0.08) {
-      // Waterlogging / road puddle
-      detections.push({
-        classId: 4,
-        issueType: 'waterlogging',
-        rawConfidence: 0.88,
-        confidence: 0.88,
-        priority: 'HIGH',
-        box: [(boxX - boxW / 2) * MODEL_INPUT_WIDTH, (boxY - boxH / 2) * MODEL_INPUT_HEIGHT, (boxX + boxW / 2) * MODEL_INPUT_WIDTH, (boxY + boxH / 2) * MODEL_INPUT_HEIGHT],
-        boundingBox: bBox,
-      });
-    } else if (darkRatio > 0.06) {
-      // Road surface defect / pothole
-      detections.push({
-        classId: 2,
-        issueType: 'pothole',
-        rawConfidence: 0.82,
-        confidence: 0.82,
-        priority: 'HIGH',
-        box: [(boxX - boxW / 2) * MODEL_INPUT_WIDTH, (boxY - boxH / 2) * MODEL_INPUT_HEIGHT, (boxX + boxW / 2) * MODEL_INPUT_WIDTH, (boxY + boxH / 2) * MODEL_INPUT_HEIGHT],
-        boundingBox: bBox,
-      });
-    } else {
-      // General road defect / cracking
-      detections.push({
-        classId: 1,
-        issueType: 'cracking',
-        rawConfidence: 0.78,
-        confidence: 0.78,
-        priority: 'MEDIUM',
-        box: [(boxX - boxW / 2) * MODEL_INPUT_WIDTH, (boxY - boxH / 2) * MODEL_INPUT_HEIGHT, (boxX + boxW / 2) * MODEL_INPUT_WIDTH, (boxY + boxH / 2) * MODEL_INPUT_HEIGHT],
-        boundingBox: bBox,
-      });
-    }
-  }
-
-  return detections;
-}
-
 
 // ---------------------------------------------------------------------------
 // API Endpoints
@@ -914,19 +923,19 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD);
 
     const ISSUE_DEPT_MAP = {
-      'pothole': { name: 'Road Maintenance Department', code: 'ROAD' },
-      'alligator cracking': { name: 'Road Maintenance Department', code: 'ROAD' },
-      'cracking': { name: 'Road Maintenance Department', code: 'ROAD' },
-      'manhole defect': { name: 'Water Supply & Drainage Department', code: 'TWAD' },
-      'waterlogging': { name: 'Water Supply & Drainage Department', code: 'TWAD' },
+      'pothole': { name: 'Road Maintenance', code: 'ROAD' },
+      'alligator cracking': { name: 'Road Maintenance', code: 'ROAD' },
+      'cracking': { name: 'Road Maintenance', code: 'ROAD' },
+      'manhole defect': { name: 'Sewerage', code: 'SEWER' },
+      'waterlogging': { name: 'Stormwater / Drainage', code: 'DRAIN' },
       'road divider damage': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'damaged traffic sign': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'missing signage': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'street light fault': { name: 'Street Lighting Department', code: 'LIGHTING' },
-      'debris / road blockage': { name: 'Solid Waste Management Department', code: 'SWM' },
+      'debris / road blockage': { name: 'Solid Waste Management', code: 'SWM' },
       'damaged footpath': { name: 'Public Works Department', code: 'PWD' },
       'public route defect': { name: 'Public Works Department', code: 'PWD' },
-      'no_major_issue': { name: 'Road Maintenance Department', code: 'ROAD' },
+      'no_major_issue': { name: 'Road Maintenance', code: 'ROAD' },
     };
 
     // If damage detected, return immediately with highest priority defect
@@ -940,7 +949,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       });
 
       const primary = sorted[0];
-      const dept = ISSUE_DEPT_MAP[primary.issueType] || { name: 'Road Maintenance Department', code: 'ROAD' };
+      const dept = ISSUE_DEPT_MAP[primary.issueType] || { name: 'Road Maintenance', code: 'ROAD' };
 
       console.log("[YOLO] Damage detected:", primary.issueType, `(${Math.round(primary.confidence * 100)}%)`);
       return res.status(200).json({
@@ -951,10 +960,11 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         analysisStatus: 'damage_detected',
         issueType: primary.issueType,
         confidence: Math.round(primary.confidence * 100),
-        confidenceRaw: primary.confidence,
+        confidenceRaw: primary.rawConfidence,
         priority: primary.priority,
         department: dept.name,
         departmentCode: dept.code,
+        boundingBox: primary.boundingBox,
         allDetections: sorted,
         primaryDetection: primary,
       });
@@ -972,9 +982,9 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       confidence: 0,
       confidenceRaw: 0,
       priority: 'NONE',
-      department: 'Road Maintenance Department',
+      department: 'Road Maintenance',
       departmentCode: 'ROAD',
-      message: 'No major road issues detected.',
+      message: 'No supported issue detected.',
       allDetections: [],
       primaryDetection: null,
     });

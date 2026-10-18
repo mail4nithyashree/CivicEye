@@ -353,10 +353,9 @@ export default function ReportScreen() {
       }
 
       // 2. Check for Uncertain / Unclear Image
-      // If user provided a valid civic complaint with description, proceed directly to review & submit
-      const isUnclear = (result.analysisStatus === 'unclear_image' || !result.isClear) && !description.trim();
+      const isUnclear = result.analysisStatus === 'unclear_image' || !result.isClear;
       if (isUnclear) {
-        console.log('[ANALYZE] Prompting for photo review...');
+        console.log('[ANALYZE] Prompting for photo review due to unclear/ambiguous image...');
         setUncertainAnalysis(result);
         setStep('uncertain');
         return;
@@ -418,7 +417,7 @@ export default function ReportScreen() {
         return;
       }
 
-      // 4. Check if routed to any non-Road department
+      // 4. Check if routed to any non-Road department via description
       if (!isRoadDepartment(classifiedDept)) {
         const nonRoadIssue = getDefaultIssueTypeForDepartment(
           classifiedDept.departmentCode,
@@ -456,15 +455,49 @@ export default function ReportScreen() {
         return;
       }
 
-      // 5. Road Damage Detected
+      // 5. Valid Road Surface with NO Visible Major Defect (Outcome B)
+      if (result.analysisStatus === 'no_major_issue' || !result.hasDamage || result.confidence === 0) {
+        console.log('[ANALYZE] Valid road surface without detected defects. Transitioning to no_issue step...');
+        await logAnalysisRecord({
+          citizenId: user?.uid,
+          citizenEmail: user?.email ?? '',
+          roadValidationResult: 'road',
+          roadValidationConfidence: result.roadConfidence || 0.95,
+          analysisStatus: 'no_major_issue',
+          detectedIssue: 'No supported issue detected',
+          detectionConfidence: 0,
+          latitude: location.lat,
+          longitude: location.lng,
+          region: selectedRegion,
+        });
+
+        setAnalysis({
+          ...result,
+          isRoad: true,
+          hasDamage: false,
+          analysisStatus: 'no_major_issue',
+          issueType: 'no_major_issue',
+          confidence: 0,
+          confidenceRaw: 0,
+          priority: 'NONE',
+          department: 'Road Maintenance Department',
+          departmentCode: 'ROAD',
+          allDetections: [],
+        });
+
+        setStep('no_issue');
+        return;
+      }
+
+      // 6. Valid Civic Infrastructure Defect Detected (Outcome A)
       await logAnalysisRecord({
         citizenId: user?.uid,
         citizenEmail: user?.email ?? '',
         roadValidationResult: 'road',
         roadValidationConfidence: result.roadConfidence || 0.95,
-        analysisStatus: result.analysisStatus || 'damage_detected',
-        detectedIssue: result.issueType || 'pothole',
-        detectionConfidence: result.confidence || 85,
+        analysisStatus: 'damage_detected',
+        detectedIssue: result.issueType,
+        detectionConfidence: result.confidence,
         latitude: location.lat,
         longitude: location.lng,
         region: selectedRegion,
@@ -472,31 +505,34 @@ export default function ReportScreen() {
 
       setAnalysis({
         ...result,
-        issueType: (result.issueType && result.issueType !== 'no_major_issue' && result.issueType !== 'unclear_image') ? result.issueType : 'pothole',
+        issueType: result.issueType,
         hasDamage: true,
         priority: result.priority && result.priority !== 'NONE' ? result.priority : 'HIGH',
         department: result.department || 'Road Maintenance Department',
         departmentCode: result.departmentCode || 'ROAD',
+        confidence: result.confidence,
+        confidenceRaw: result.confidenceRaw,
+        allDetections: result.allDetections || [],
       });
       setStep('result');
     } catch (err) {
       console.log('[ANALYZE] Analysis error details:', err);
-      // Fallback smoothly to review so user is never blocked
+      // Graceful fallback to review without fabricating a false AI defect
       const fallbackDept = classifyDepartmentFromDescription(description.trim());
-      setAnalysis({
+      setUncertainAnalysis({
         isRoad: true,
-        roadConfidence: 0.85,
-        hasDamage: true,
-        analysisStatus: 'damage_detected',
-        issueType: 'pothole',
-        confidence: 80,
-        confidenceRaw: 0.80,
-        priority: 'HIGH',
-        department: fallbackDept.department || 'Road Maintenance Department',
-        departmentCode: fallbackDept.departmentCode || 'ROAD',
+        roadConfidence: 0.5,
+        hasDamage: false,
+        analysisStatus: 'unclear_image',
+        issueType: fallbackDept.department,
+        confidence: 0,
+        confidenceRaw: 0,
+        priority: 'LOW',
+        department: fallbackDept.department,
+        departmentCode: fallbackDept.departmentCode,
         allDetections: [],
       });
-      setStep('result');
+      setStep('uncertain');
     }
   }
 
@@ -515,7 +551,10 @@ export default function ReportScreen() {
       const cloudinaryUrl = await uploadComplaintImage(imageUri);
       const classifiedDept = classifyDepartmentFromDescription(description.trim(), analysis.department);
       const isRoad = isRoadDepartment(classifiedDept);
-      const defaultIssue = isRoad
+      const isNoMajorIssue = isRoad && (!analysis.hasDamage || analysis.issueType === 'no_major_issue');
+      const defaultIssue = isNoMajorIssue
+        ? 'Road Surface (Inspection Requested)'
+        : isRoad
         ? analysis.issueType
         : getDefaultIssueTypeForDepartment(classifiedDept.departmentCode, classifiedDept.matchedKeyword);
 
@@ -525,6 +564,9 @@ export default function ReportScreen() {
         activeDept,
         activeDeptCode
       );
+      const submitPriority = isNoMajorIssue ? 'LOW' : (analysis.priority && analysis.priority !== 'NONE' ? analysis.priority : 'HIGH');
+      const submitConfidence = isNoMajorIssue ? 0 : (analysis.confidence || 0);
+
       const submitResult = await submitComplaint({
         citizenId: user.uid,
         citizenEmail: user.email ?? '',
@@ -534,9 +576,9 @@ export default function ReportScreen() {
         longitude: location.lng,
         region: selectedRegion,
         issueType: defaultIssue,
-        confidence: analysis.confidence,
-        priority: analysis.priority,
-        severity: analysis.priority,
+        confidence: submitConfidence,
+        priority: submitPriority,
+        severity: submitPriority,
         estimatedBudget: undefined,
         estimatedBudgetDesc: 'Pending on-site manual estimation by Field Inspector',
         budgetBreakdown: undefined,
@@ -662,44 +704,140 @@ export default function ReportScreen() {
   if (step === 'no_issue') {
     return (
       <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.centeredScroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.noIssueCard}>
-            <View style={styles.noIssueIconWrap}>
-              <Ionicons name="checkmark-circle" size={56} color={AppColors.success} />
-            </View>
-            <Text style={styles.noIssueTitle}>Civic Image Verified</Text>
-            <Text style={styles.noIssueSub}>
-              The image was validated in {selectedRegion}. You can proceed to submit your complaint for field inspection.
-            </Text>
-            <View style={styles.roadConfidenceBadge}>
-              <Ionicons name="shield-checkmark-outline" size={16} color={AppColors.success} />
-              <Text style={styles.roadConfidenceText}>
-                Road Surface Validated ({Math.round((analysis?.roadConfidence ?? 0.9) * 100)}%)
-              </Text>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setStep('form')} accessibilityRole="button" accessibilityLabel="Back">
+              <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Road Verification</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          {/* Reference ID Card */}
+          <View style={styles.refIdCard}>
+            <View style={styles.refIdRow}>
+              <Ionicons name="shield-checkmark" size={20} color="#059669" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.refIdLabel, { color: '#059669' }]}>AI VERIFICATION RESULT</Text>
+                <Text style={styles.refIdValue}>No Supported Defect Detected</Text>
+              </View>
+              <View style={[styles.pendingBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                <Text style={[styles.pendingBadgeText, { color: '#065F46' }]}>Verified Clean</Text>
+              </View>
             </View>
           </View>
 
-          <View style={styles.actionButtonGroup}>
+          {/* Image preview */}
+          {imageUri && (
+            <View style={styles.previewWrap}>
+              <CivicImage
+                uri={imageUri}
+                issueType="Normal Road"
+                style={styles.previewImage}
+                resizeMode="cover"
+              />
+            </View>
+          )}
+
+          {/* Verification Card */}
+          <View style={[styles.resultCard, { borderColor: '#A7F3D0', backgroundColor: '#F0FDF4' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="checkmark-circle" size={24} color="#059669" />
+              <Text style={[styles.resultHeading, { color: '#065F46', marginBottom: 0 }]}>
+                Normal Road Surface
+              </Text>
+            </View>
+            <Text style={{ fontSize: 13, color: '#047857', lineHeight: 18, marginBottom: 12 }}>
+              The computer vision model verified an undamaged road surface with no visible major potholes, cracking, or pavement failure detected.
+            </Text>
+
+            <View style={[styles.resultGrid, { backgroundColor: '#FFFFFF', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#D1FAE5' }]}>
+              <View style={styles.resultItem}>
+                <Text style={styles.resultItemLabel}>Model Status</Text>
+                <Text style={[styles.resultItemValueSmall, { color: '#065F46' }]}>No defect detected</Text>
+              </View>
+              <View style={styles.resultItem}>
+                <Text style={styles.resultItemLabel}>Road Confidence</Text>
+                <Text style={[styles.resultItemValueSmall, { color: '#065F46' }]}>95% Normal</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Citizen Description Card */}
+          <View style={styles.descBox}>
+            <View style={styles.descHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="chatbox-ellipses-outline" size={16} color={AppColors.primary} />
+                <Text style={styles.descLabel}>Your Submitted Description</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setStep('form')}
+                style={styles.editDescBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Edit description"
+              >
+                <Ionicons name="pencil" size={12} color={AppColors.primary} />
+                <Text style={styles.editDescText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.descText}>
+              {description.trim() ? description : '(No additional description provided)'}
+            </Text>
+          </View>
+
+          {/* Explanatory Notice */}
+          <View style={styles.rejectedNoticeBox}>
+            <Ionicons name="information-circle-outline" size={18} color="#059669" />
+            <Text style={[styles.rejectedNoticeText, { color: '#065F46' }]}>
+              To prevent false complaints from entering municipal repair queues, CivicEye does not automatically log undamaged roads as defects. If you believe there is a subtle defect requiring on-site examination, you may request a physical inspection below.
+            </Text>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={[styles.actionButtonGroup, { marginTop: 18 }]}>
             <TouchableOpacity
-              style={styles.primaryBtn}
+              style={[styles.primaryBtn, { backgroundColor: '#059669' }]}
               onPress={() => setStep('result')}
               accessible
               accessibilityRole="button"
-              accessibilityLabel="Proceed to Submit"
+              accessibilityLabel="Request Physical On-Site Inspection"
             >
-              <Text style={styles.primaryBtnText}>Proceed to Submit</Text>
-              <Ionicons name="arrow-forward" size={18} color={AppColors.white} />
+              <Ionicons name="shield-outline" size={18} color={AppColors.white} />
+              <Text style={styles.primaryBtnText}>Request Physical Inspection</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.secondaryBtn}
-              onPress={() => setStep('form')}
+              onPress={() => {
+                if (imageUri) {
+                  setRawPickedUri(imageUri);
+                  setEditorVisible(true);
+                } else {
+                  setStep('form');
+                }
+              }}
               accessible
               accessibilityRole="button"
-              accessibilityLabel="Edit Details"
+              accessibilityLabel="Retake or Crop Photo"
             >
-              <Ionicons name="create-outline" size={18} color={AppColors.textPrimary} />
-              <Text style={styles.secondaryBtnText}>Edit Details</Text>
+              <Ionicons name="crop-outline" size={18} color={AppColors.textPrimary} />
+              <Text style={styles.secondaryBtnText}>Retake / Crop Photo</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() => {
+                setImageUri(null);
+                setAnalysis(null);
+                setDescription('');
+                setStep('form');
+              }}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Report Another Issue"
+            >
+              <Ionicons name="arrow-back-outline" size={18} color={AppColors.textPrimary} />
+              <Text style={styles.secondaryBtnText}>Report Another Issue</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>

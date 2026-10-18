@@ -11,6 +11,7 @@ config.resolver.blockList = [
   new RegExp(`^${path.resolve(__dirname, 'AI').replace(/\\/g, '[\\\\/]')}.*`),
   new RegExp(`^${path.resolve(__dirname, 'experiments').replace(/\\/g, '[\\\\/]')}.*`),
   new RegExp(`^${path.resolve(__dirname, 'dataset_working').replace(/\\/g, '[\\\\/]')}.*`),
+  new RegExp(`^${path.resolve(__dirname, 'scripts').replace(/\\/g, '[\\\\/]')}.*`),
   new RegExp(`^${path.resolve(__dirname, 'assets', 'models').replace(/\\/g, '[\\\\/]')}.*\\.onnx$`),
 ];
 

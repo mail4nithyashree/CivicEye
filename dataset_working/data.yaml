@@ -1,7 +1,7 @@
 # CivicEye 10-Class Multi-Infrastructure Issue Dataset Configuration
 # Generated automatically by CivicEye YOLO Dataset Exporter
 
-path: C:/Users/Nithya/CivicEye-Miniproject/dataset_working # Dataset root directory
+path: C:/Users/Nithya/CivicEye/dataset_working # Dataset root directory
 train: images/train      # Training images (relative to path)
 val: images/val          # Validation images (relative to path)
 test: images/test        # Test images (relative to path)

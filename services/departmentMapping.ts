@@ -27,7 +27,7 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
   'alligator cracking':      { name: 'Road Maintenance', code: 'ROAD' },
   'cracking':                { name: 'Road Maintenance', code: 'ROAD' },
   'pothole':                 { name: 'Road Maintenance', code: 'ROAD' },
-  'manhole defect':          { name: 'Stormwater / Drainage', code: 'DRAIN' },
+  'manhole defect':          { name: 'Sewerage', code: 'SEWER' },
   'waterlogging':            { name: 'Stormwater / Drainage', code: 'DRAIN' },
   'road divider damage':     { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'damaged traffic sign':    { name: 'Traffic / Road Safety Department', code: 'SAFETY' },

@@ -64,5 +64,8 @@ app-example
 
 # PyTorch weights & experimental runs
 *.pt
+*.cache
+runs/
 experiments/
+
 

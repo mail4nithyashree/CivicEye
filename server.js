@@ -886,7 +886,27 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       return res.status(400).json({ ok: false, message: 'No image provided.' });
     }
 
-    const decodedImage = decodeImageBuffer(imageBuffer);
+    let decodedImage;
+    try {
+      decodedImage = decodeImageBuffer(imageBuffer);
+    } catch (decodeErr) {
+      console.warn('[YOLO] Unparseable image buffer, rejecting as unclear:', decodeErr.message);
+      return res.status(200).json({
+        ok: true,
+        isRoad: false,
+        isDissimilar: true,
+        isClear: false,
+        analysisStatus: 'unclear_image',
+        detectedIssue: 'unclear_image',
+        invalidReason: 'blurry_image',
+        confidence: 0,
+        hasDamage: false,
+        department: null,
+        message: 'The uploaded file could not be decoded. Please upload a clear photo of the civic issue.',
+        allDetections: [],
+        primaryDetection: null,
+      });
+    }
 
     // Step 1: Validate Road / Civic Scene Gatekeeper (MobileNetV2 + Pixel Heuristics)
     const validation = await validateRoadPresence(decodedImage);

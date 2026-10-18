@@ -39,12 +39,12 @@ const { getAuth, signInWithEmailAndPassword } = require('firebase/auth');
 const { getFirestore: getFirebaseFirestore, doc, updateDoc, getDoc, serverTimestamp } = require('firebase/firestore');
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBhc69f1641f1CwYmHFU3JBed9EJxwIaAE",
-  authDomain: "civiceye-21b88.firebaseapp.com",
-  projectId: "civiceye-21b88",
-  storageBucket: "civiceye-21b88.firebasestorage.app",
-  messagingSenderId: "819267334108",
-  appId: "1:819267334108:web:aa1eb5f0cc91edd068a919",
+  apiKey: "AIzaSyD2SIXmgD8xgYvdFMG0ZryGF3F5tgYOlGs",
+  authDomain: "civiceye-c127c.firebaseapp.com",
+  projectId: "civiceye-c127c",
+  storageBucket: "civiceye-c127c.firebasestorage.app",
+  messagingSenderId: "930740300088",
+  appId: "1:930740300088:web:75042d21b2efa28fea79cd",
 };
 
 const serverFbApp = getApps().length === 0 ? initializeFirebaseApp(firebaseConfig) : getApps()[0];
@@ -382,10 +382,28 @@ const FLOWER_PLANT_CLASSES = new Set([
   723, // pinwheel (decorative garden)
   580, // greenhouse, nursery
   984, // rapeseed
+  985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998,
+]);
+
+// Explicit Indoor & Office items
+const EXPLICIT_INDOOR_CLASSES = new Set([
+  508, 916, 620, 664, 782, 673, 487, 526, 530, 532, 537, 553, 559, 564, 574, 590, 604, 608, 629, 638,
+  645, 651, 668, 679, 688, 703, 720, 722, 735, 755, 759, 765, 768, 770, 776, 785, 794, 804, 808,
+  831, 834, 846, 852, 854, 857, 859, 861, 898, 900, 903,
 ]);
 
 async function validateRoadPresence(decodedImage) {
   const { width, height, data } = decodedImage;
+
+  if (width <= 4 || height <= 4) {
+    return {
+      isRoad: false,
+      isClear: false,
+      confidence: 0.01,
+      reason: 'blurry_image',
+      message: 'The photo is completely blank or uniform. Please upload a clear photo of the civic issue.',
+    };
+  }
 
   // 1. Exposure and Uniformity Check
   let totalLum = 0;
@@ -448,8 +466,8 @@ async function validateRoadPresence(decodedImage) {
     };
   }
 
-  // 2. Color saturation and human selfie check
-  const startRow = Math.floor(height * 0.3);
+  // 2. Color saturation and human selfie / plant check
+  const startRow = Math.floor(height * 0.25);
   const totalPixels = width * (height - startRow);
 
   let lowSatCount = 0;
@@ -463,36 +481,118 @@ async function validateRoadPresence(decodedImage) {
       const r = data[idx], g = data[idx + 1], b = data[idx + 2];
       const [h, s, l] = rgbToHsl(r, g, b);
 
-      if (s < 0.30) lowSatCount++;
-      if (s > 0.40 && h >= 70 && h <= 170) vividGreenCount++;
-      if ((h < 35 || h > 345) && s > 0.25 && s < 0.65 && l > 0.40 && l < 0.70) skinToneCount++;
-      if (s > 0.60 && l > 0.30 && l < 0.85 && (h < 55 || h > 270)) vividFlowerCount++;
+      if (s < 0.28) lowSatCount++;
+      if (s > 0.25 && h >= 65 && h <= 170) vividGreenCount++;
+      if ((h < 35 || h > 345) && s > 0.25 && s < 0.65 && l > 0.35 && l < 0.75) skinToneCount++;
+      if (s > 0.40 && l > 0.25 && l < 0.85 && (h < 55 || h > 280)) vividFlowerCount++;
     }
   }
 
   const sampleCount = (totalPixels / 4) || 1;
   const lowSatRatio = lowSatCount / sampleCount;
   const skinRatio = skinToneCount / sampleCount;
+  const greenRatio = vividGreenCount / sampleCount;
   const flowerRatio = vividFlowerCount / sampleCount;
 
   // Obvious close-up portraits/selfies
-  if (skinRatio > 0.50 && lowSatRatio < 0.15) {
+  if (skinRatio > 0.25 && lowSatRatio < 0.30) {
     return {
       isRoad: false,
       isClear: true,
       confidence: 0.05,
       reason: 'Portrait / person detected',
+      message: 'Invalid Image, give valid Issue Image!',
     };
   }
 
-  // Obvious indoor flowers with zero road/ground texture
-  if (flowerRatio > 0.45 && lowSatRatio < 0.10) {
+  // Obvious outdoor flora / garden foliage without road pavement
+  if (greenRatio > 0.30 && lowSatRatio < 0.25) {
+    return {
+      isRoad: false,
+      isClear: true,
+      confidence: 0.05,
+      reason: 'Flora / foliage without road pavement',
+      message: 'Invalid Image, give valid Issue Image!',
+    };
+  }
+
+  // Obvious vivid flower colors without road pavement
+  if (flowerRatio > 0.20 && lowSatRatio < 0.25) {
     return {
       isRoad: false,
       isClear: true,
       confidence: 0.05,
       reason: 'Vivid flower colors without road pavement',
+      message: 'Invalid Image, give valid Issue Image!',
     };
+  }
+
+  // 3. MobileNetV2 Deep Learning Semantic Scene Validation
+  try {
+    const clsSession = await getClassifierSession();
+    if (clsSession) {
+      const tensor = preprocessForClassifier(decodedImage);
+      const feeds = { [clsSession.inputNames[0]]: tensor };
+      const results = await clsSession.run(feeds);
+      const outputTensor = results[clsSession.outputNames[0]];
+      const probs = softmax(outputTensor.data);
+
+      const indexed = Array.from(probs).map((p, i) => ({ i, p })).sort((a, b) => b.p - a.p);
+      const top = indexed[0];
+      const top5 = indexed.slice(0, 5);
+
+      const hasRoadInTop5 = top5.some(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i) && item.p > 0.04);
+      if (!hasRoadInTop5) {
+        // Check animal classes (0..397)
+        const animalProb = top5.filter(item => item.i >= 0 && item.i <= 397).reduce((sum, item) => sum + item.p, 0);
+        if (animalProb > 0.35 || (top.i >= 0 && top.i <= 397 && top.p > 0.20)) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Animal / pet detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // Check indoor classes
+        const indoorProb = top5.filter(item => EXPLICIT_INDOOR_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (indoorProb > 0.35 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.30)) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Indoor / unrelated object detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // Check person / apparel classes
+        if (top.i >= 398 && top.i <= 402 && top.p > 0.15) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Person / clothing detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+
+        // Check flower / flora classes
+        const plantProb = top5.filter(item => FLOWER_PLANT_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
+        if (plantProb > 0.20 || (FLOWER_PLANT_CLASSES.has(top.i) && top.p > 0.10)) {
+          return {
+            isRoad: false,
+            isClear: true,
+            confidence: 0.05,
+            reason: 'Flower / plant detected',
+            message: 'Invalid Image, give valid Issue Image!',
+          };
+        }
+      }
+    }
+  } catch (clsErr) {
+    console.warn('[Vision Classifier] Inference error in validateRoadPresence:', clsErr.message);
   }
 
   return {
@@ -593,9 +693,9 @@ function applyNms(candidates, iouThreshold = IOU_THRESHOLD) {
 }
 
 const CLASS_CONF_THRESHOLDS = {
-  0: 0.15, // Alligator cracking
-  1: 0.15, // Linear cracking
-  2: 0.15, // Pothole
+  0: 0.02, // Alligator cracking
+  1: 0.02, // Linear cracking
+  2: 0.02, // Pothole
   3: 0.18, // Manhole defect
   4: 0.18, // Waterlogging
   5: 0.18, // Road divider damage
@@ -779,7 +879,31 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
 
     const decodedImage = decodeImageBuffer(imageBuffer);
 
-    // Step 1: Execute YOLO Detection First
+    // Step 1: Validate Road / Civic Scene Gatekeeper (MobileNetV2 + Pixel Heuristics)
+    const validation = await validateRoadPresence(decodedImage);
+    if (!validation.isRoad) {
+      console.log("[YOLO] Non-road or dissimilar image detected:", validation.reason);
+      const isUnclear = validation.reason === 'blurry_image' || validation.reason === 'dark_image' || validation.reason === 'overexposed_image';
+      return res.status(200).json({
+        ok: true,
+        isRoad: false,
+        isDissimilar: !isUnclear,
+        isClear: !isUnclear,
+        roadConfidence: validation.confidence,
+        analysisStatus: isUnclear ? 'unclear_image' : 'dissimilar_image',
+        detectedIssue: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
+        invalidReason: validation.reason || 'Invalid Image, give valid Issue Image!',
+        confidence: 0,
+        priority: 'NONE',
+        message: validation.message || (isUnclear
+          ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
+          : 'Invalid Image, give valid Issue Image!'),
+        allDetections: [],
+        primaryDetection: null,
+      });
+    }
+
+    // Step 2: Execute YOLO Detection on Validated Civic Scene
     const session = await getOnnxSession();
     const inputTensor = preprocessToFloatTensor(decodedImage, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT);
 
@@ -788,11 +912,6 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     const outputName = session.outputNames[0];
     const outputTensor = results[outputName];
     let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD);
-
-    // If YOLO did not detect a box, run domain saliency fallback
-    if (detections.length === 0) {
-      detections = detectDomainDefects(decodedImage);
-    }
 
     const ISSUE_DEPT_MAP = {
       'pothole': { name: 'Road Maintenance Department', code: 'ROAD' },
@@ -838,30 +957,6 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         departmentCode: dept.code,
         allDetections: sorted,
         primaryDetection: primary,
-      });
-    }
-
-    // Step 2: Validate road / civic presence
-    const validation = await validateRoadPresence(decodedImage);
-    if (!validation.isRoad) {
-      console.log("[YOLO] Non-road or dissimilar image detected:", validation.reason);
-      const isUnclear = validation.reason === 'blurry_image' || validation.reason === 'dark_image' || validation.reason === 'overexposed_image';
-      return res.status(200).json({
-        ok: true,
-        isRoad: false,
-        isDissimilar: !isUnclear,
-        isClear: !isUnclear,
-        roadConfidence: validation.confidence,
-        analysisStatus: isUnclear ? 'unclear_image' : 'dissimilar_image',
-        detectedIssue: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
-        invalidReason: validation.reason || 'Invalid Image, give valid Issue Image!',
-        confidence: 0,
-        priority: 'NONE',
-        message: validation.message || (isUnclear
-          ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
-          : 'Invalid Image, give valid Issue Image!'),
-        allDetections: [],
-        primaryDetection: null,
       });
     }
 
@@ -1117,7 +1212,7 @@ app.post('/api/verify-complaint', async (req, res) => {
     const historyItem = {
       id: `hist-${Date.now()}`,
       previousStatus: snap.exists() ? snap.data().status : 'Pending Field Verification',
-      newStatus: 'In Progress',
+      newStatus: 'Verified',
       updatedBy: verification.inspectorId || 'inspector',
       updatedByName: verification.inspectorName || 'Field Inspector',
       remarks: `Field inspection completed: Verified as ${(verification.verifiedIssue || 'pothole').toUpperCase()}, Severity ${verification.severity || 'MEDIUM'}, Est. Resolution: ${verification.estimatedResolutionDays || 3} days, Budget: ₹${budgetNum}. Road Maintained by: ${verification.maintenanceAuthority || 'CCMC'}.${verification.isOtherDeptInvolved ? ` Secondary Involved: ${(verification.involvedDepartments || []).join(', ')}` : ''}`,
@@ -1125,7 +1220,7 @@ app.post('/api/verify-complaint', async (req, res) => {
     };
 
     const updatePayload = {
-      status: 'In Progress',
+      status: 'Verified',
       inspectionStatus: 'VALID',
       severity: verification.severity || 'MEDIUM',
       priority: verification.severity || 'MEDIUM',

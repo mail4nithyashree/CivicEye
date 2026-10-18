@@ -208,8 +208,10 @@ def main():
     yolo_session = ort.InferenceSession(YOLO_PATH, providers=['CPUExecutionProvider'])
 
     # Load base images
-    pothole_base = Image.open('dataset_working/images/test/pothole_user_crop.jpg').convert('RGB')
-    crack_base = Image.open('dataset_working/images/test/cropped_crack.jpg').convert('RGB')
+    pothole_path = 'assets/models/pothole_user_crop.jpg' if os.path.exists('assets/models/pothole_user_crop.jpg') else 'dataset_working/images/test/pothole_user_crop.jpg'
+    crack_path = 'assets/models/cropped_crack.jpg' if os.path.exists('assets/models/cropped_crack.jpg') else 'dataset_working/images/test/cropped_crack.jpg'
+    pothole_base = Image.open(pothole_path).convert('RGB')
+    crack_base = Image.open(crack_path).convert('RGB')
 
     test_battery = []
 

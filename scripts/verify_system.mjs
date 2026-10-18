@@ -18,12 +18,12 @@ import {
 } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBhc69f1641f1CwYmHFU3JBed9EJxwIaAE",
-  authDomain: "civiceye-21b88.firebaseapp.com",
-  projectId: "civiceye-21b88",
-  storageBucket: "civiceye-21b88.firebasestorage.app",
-  messagingSenderId: "819267334108",
-  appId: "1:819267334108:web:aa1eb5f0cc91edd068a919",
+  apiKey: "AIzaSyD2SIXmgD8xgYvdFMG0ZryGF3F5tgYOlGs",
+  authDomain: "civiceye-c127c.firebaseapp.com",
+  projectId: "civiceye-c127c",
+  storageBucket: "civiceye-c127c.firebasestorage.app",
+  messagingSenderId: "930740300088",
+  appId: "1:930740300088:web:aa1eb5f0cc91edd068a919",
 };
 
 const app = initializeApp(firebaseConfig);
@@ -71,7 +71,7 @@ async function runTestSuite() {
     // ========================================================
     const officerCred = await signInWithEmailAndPassword(
       auth,
-      'officer@civiceye.gov',
+      'main@civiceye.gov',
       'Officer@123'
     );
     const officerUid = officerCred.user.uid;

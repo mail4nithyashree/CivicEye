@@ -3,12 +3,12 @@ import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, getDoc, updateDoc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBhc69f1641f1CwYmHFU3JBed9EJxwIaAE",
-  authDomain: "civiceye-21b88.firebaseapp.com",
-  projectId: "civiceye-21b88",
-  storageBucket: "civiceye-21b88.firebasestorage.app",
-  messagingSenderId: "819267334108",
-  appId: "1:819267334108:web:aa1eb5f0cc91edd068a919",
+  apiKey: "AIzaSyD2SIXmgD8xgYvdFMG0ZryGF3F5tgYOlGs",
+  authDomain: "civiceye-c127c.firebaseapp.com",
+  projectId: "civiceye-c127c",
+  storageBucket: "civiceye-c127c.firebasestorage.app",
+  messagingSenderId: "930740300088",
+  appId: "1:930740300088:web:aa1eb5f0cc91edd068a919",
 };
 
 const app = initializeApp(firebaseConfig);
@@ -20,7 +20,7 @@ async function testManualVerificationFlow() {
 
   // 1. Sign in as Field Inspector (Durai)
   console.log('1. Signing in as Inspector: inspector@civiceye.gov');
-  const inspectorCred = await signInWithEmailAndPassword(auth, 'inspector@civiceye.gov', 'Test123456');
+  const inspectorCred = await signInWithEmailAndPassword(auth, 'inspector@civiceye.gov', 'Inspector@123');
   console.log('   Inspector UID:', inspectorCred.user.uid);
 
   // 2. Create a fresh test complaint with status = "Submitted"

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CivicEye 10-Class Dataset Quality Control & Preview Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; }
+    h1, h2, h3 { color: #38bdf8; }
+    .header { background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 24px; }
+    .stats-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .stats-table th, .stats-table td { border: 1px solid #334155; padding: 8px 12px; text-align: left; }
+    .stats-table th { background: #0f172a; color: #38bdf8; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
+    .card { background: #1e293b; border-radius: 8px; overflow: hidden; border: 1px solid #334155; }
+    .card img { width: 100%; height: 200px; object-fit: cover; display: block; }
+    .card-info { padding: 12px; font-size: 13px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>CivicEye 10-Class Dataset Quality Control Report</h1>
+    <p>Audit of all exported training, validation, and testing annotations with color-coded bounding box overlays.</p>
+    <table class="stats-table">
+      <tr>
+        <th>Class ID</th>
+        <th>Class Name</th>
+        <th>Target Department</th>
+        <th>Color Indicator</th>
+        <th>Total Annotated Instances</th>
+      </tr>
+      <tr>
+        <td><strong>0</strong></td>
+        <td>alligator cracking</td>
+        <td>Road Maintenance (ROAD)</td>
+        <td><span class="badge" style="background: #EF4444; color: #fff;">#EF4444</span></td>
+        <td><strong>3</strong></td>
+      </tr>
+      <tr>
+        <td><strong>1</strong></td>
+        <td>cracking</td>
+        <td>Road Maintenance (ROAD)</td>
+        <td><span class="badge" style="background: #F97316; color: #fff;">#F97316</span></td>
+        <td><strong>3</strong></td>
+      </tr>
+      <tr>
+        <td><strong>2</strong></td>
+        <td>pothole</td>
+        <td>Road Maintenance (ROAD)</td>
+        <td><span class="badge" style="background: #EAB308; color: #fff;">#EAB308</span></td>
+        <td><strong>5</strong></td>
+      </tr>
+      <tr>
+        <td><strong>3</strong></td>
+        <td>manhole defect</td>
+        <td>Water Supply & Drainage (TWAD)</td>
+        <td><span class="badge" style="background: #3B82F6; color: #fff;">#3B82F6</span></td>
+        <td><strong>1</strong></td>
+      </tr>
+      <tr>
+        <td><strong>4</strong></td>
+        <td>waterlogging</td>
+        <td>Stormwater Drainage (DRAIN)</td>
+        <td><span class="badge" style="background: #06B6D4; color: #fff;">#06B6D4</span></td>
+        <td><strong>1</strong></td>
+      </tr>
+      <tr>
+        <td><strong>5</strong></td>
+        <td>road divider damage</td>
+        <td>Traffic & Road Safety (SAFETY)</td>
+        <td><span class="badge" style="background: #A855F7; color: #fff;">#A855F7</span></td>
+        <td><strong>6</strong></td>
+      </tr>
+      <tr>
+        <td><strong>6</strong></td>
+        <td>damaged traffic sign</td>
+        <td>Traffic & Road Safety (SAFETY)</td>
+        <td><span class="badge" style="background: #EC4899; color: #fff;">#EC4899</span></td>
+        <td><strong>13</strong></td>
+      </tr>
+      <tr>
+        <td><strong>7</strong></td>
+        <td>street light fault</td>
+        <td>Street Lighting (LIGHTING)</td>
+        <td><span class="badge" style="background: #F59E0B; color: #fff;">#F59E0B</span></td>
+        <td><strong>3</strong></td>
+      </tr>
+      <tr>
+        <td><strong>8</strong></td>
+        <td>debris / road blockage</td>
+        <td>Solid Waste Management (SWM)</td>
+        <td><span class="badge" style="background: #6B7280; color: #fff;">#6B7280</span></td>
+        <td><strong>1</strong></td>
+      </tr>
+      <tr>
+        <td><strong>9</strong></td>
+        <td>damaged footpath</td>
+        <td>Public Works (PWD)</td>
+        <td><span class="badge" style="background: #10B981; color: #fff;">#10B981</span></td>
+        <td><strong>1</strong></td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>Sample Annotated Previews (First 30 Images)</h2>
+  <div class="grid">
+    <div class="card">
+      <img src="previews/train/IMG_0001_alligator_cracking_annotated.jpg" alt="IMG_0001_alligator_cracking.jpg">
+      <div class="card-info">
+        <strong>IMG_0001_alligator_cracking.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: alligator cracking</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0004_alligator_cracking_annotated.jpg" alt="IMG_0004_alligator_cracking.jpg">
+      <div class="card-info">
+        <strong>IMG_0004_alligator_cracking.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: alligator cracking, alligator cracking</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0005_alligator_cracking_annotated.jpg" alt="IMG_0005_alligator_cracking.jpg">
+      <div class="card-info">
+        <strong>IMG_0005_alligator_cracking.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0006_alligator_cracking_annotated.jpg" alt="IMG_0006_alligator_cracking.jpg">
+      <div class="card-info">
+        <strong>IMG_0006_alligator_cracking.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0008_cracking_annotated.jpg" alt="IMG_0008_cracking.jpg">
+      <div class="card-info">
+        <strong>IMG_0008_cracking.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0013_damaged_footpath_annotated.jpg" alt="IMG_0013_damaged_footpath.jpg">
+      <div class="card-info">
+        <strong>IMG_0013_damaged_footpath.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: damaged footpath</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0014_damaged_footpath_annotated.jpg" alt="IMG_0014_damaged_footpath.jpg">
+      <div class="card-info">
+        <strong>IMG_0014_damaged_footpath.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0015_damaged_footpath_annotated.jpg" alt="IMG_0015_damaged_footpath.jpg">
+      <div class="card-info">
+        <strong>IMG_0015_damaged_footpath.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0019_damaged_traffic_sign_annotated.jpg" alt="IMG_0019_damaged_traffic_sign.jpg">
+      <div class="card-info">
+        <strong>IMG_0019_damaged_traffic_sign.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: damaged traffic sign</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0021_damaged_traffic_sign_annotated.jpg" alt="IMG_0021_damaged_traffic_sign.jpg">
+      <div class="card-info">
+        <strong>IMG_0021_damaged_traffic_sign.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: damaged traffic sign, damaged traffic sign, damaged traffic sign, damaged traffic sign</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0023_debris___road_blockage_annotated.jpg" alt="IMG_0023_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0023_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0024_debris___road_blockage_annotated.jpg" alt="IMG_0024_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0024_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0025_debris___road_blockage_annotated.jpg" alt="IMG_0025_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0025_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0026_debris___road_blockage_annotated.jpg" alt="IMG_0026_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0026_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: debris / road blockage</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0027_debris___road_blockage_annotated.jpg" alt="IMG_0027_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0027_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0028_debris___road_blockage_annotated.jpg" alt="IMG_0028_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0028_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0029_debris___road_blockage_annotated.jpg" alt="IMG_0029_debris___road_blockage.jpg">
+      <div class="card-info">
+        <strong>IMG_0029_debris___road_blockage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0030_manhole_defect_annotated.jpg" alt="IMG_0030_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0030_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0031_manhole_defect_annotated.jpg" alt="IMG_0031_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0031_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: manhole defect</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0032_manhole_defect_annotated.jpg" alt="IMG_0032_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0032_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0033_manhole_defect_annotated.jpg" alt="IMG_0033_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0033_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0036_manhole_defect_annotated.jpg" alt="IMG_0036_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0036_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0037_manhole_defect_annotated.jpg" alt="IMG_0037_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0037_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0038_manhole_defect_annotated.jpg" alt="IMG_0038_manhole_defect.jpg">
+      <div class="card-info">
+        <strong>IMG_0038_manhole_defect.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0040_pothole_annotated.jpg" alt="IMG_0040_pothole.jpg">
+      <div class="card-info">
+        <strong>IMG_0040_pothole.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: pothole</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0041_pothole_annotated.jpg" alt="IMG_0041_pothole.jpg">
+      <div class="card-info">
+        <strong>IMG_0041_pothole.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: pothole</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0042_pothole_annotated.jpg" alt="IMG_0042_pothole.jpg">
+      <div class="card-info">
+        <strong>IMG_0042_pothole.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0043_pothole_annotated.jpg" alt="IMG_0043_pothole.jpg">
+      <div class="card-info">
+        <strong>IMG_0043_pothole.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: pothole</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0046_road_divider_damage_annotated.jpg" alt="IMG_0046_road_divider_damage.jpg">
+      <div class="card-info">
+        <strong>IMG_0046_road_divider_damage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: road divider damage</span>
+      </div>
+    </div>
+    <div class="card">
+      <img src="previews/train/IMG_0047_road_divider_damage_annotated.jpg" alt="IMG_0047_road_divider_damage.jpg">
+      <div class="card-info">
+        <strong>IMG_0047_road_divider_damage.jpg</strong> (train)<br>
+        <span style="color: #94a3b8;">Annotations: Background (0 boxes)</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

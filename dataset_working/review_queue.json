@@ -1,0 +1,707 @@
+{
+  "review_count": 39,
+  "items": [
+    {
+      "image_id": "IMG_0002",
+      "filename": "a1.jpg",
+      "relative_path": "AI/training_images/alligator_cracking/a1.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\alligator_cracking\\a1.jpg",
+      "mapped_class_id": 0,
+      "mapped_class_name": "alligator cracking",
+      "category_type": "target_issue",
+      "width": 3593,
+      "height": 1960,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0003",
+      "filename": "a2.jpg",
+      "relative_path": "AI/training_images/alligator_cracking/a2.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\alligator_cracking\\a2.jpg",
+      "mapped_class_id": 0,
+      "mapped_class_name": "alligator cracking",
+      "category_type": "target_issue",
+      "width": 250,
+      "height": 333,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0005",
+      "filename": "a4.jpg",
+      "relative_path": "AI/training_images/alligator_cracking/a4.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\alligator_cracking\\a4.jpg",
+      "mapped_class_id": 0,
+      "mapped_class_name": "alligator cracking",
+      "category_type": "target_issue",
+      "width": 640,
+      "height": 479,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0006",
+      "filename": "a5.jpg",
+      "relative_path": "AI/training_images/alligator_cracking/a5.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\alligator_cracking\\a5.jpg",
+      "mapped_class_id": 0,
+      "mapped_class_name": "alligator cracking",
+      "category_type": "target_issue",
+      "width": 814,
+      "height": 377,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0007",
+      "filename": "360_F_64744739_r0UHCNGo1FCeosorpBykzott8bttMdl3.jpg",
+      "relative_path": "AI/training_images/cracking/360_F_64744739_r0UHCNGo1FCeosorpBykzott8bttMdl3.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\cracking\\360_F_64744739_r0UHCNGo1FCeosorpBykzott8bttMdl3.jpg",
+      "mapped_class_id": 1,
+      "mapped_class_name": "cracking",
+      "category_type": "target_issue",
+      "width": 540,
+      "height": 360,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0008",
+      "filename": "360_F_902996135_0m5lWsdFSqsGZ8z4ObXA46qTvjdhD5i2.jpg",
+      "relative_path": "AI/training_images/cracking/360_F_902996135_0m5lWsdFSqsGZ8z4ObXA46qTvjdhD5i2.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\cracking\\360_F_902996135_0m5lWsdFSqsGZ8z4ObXA46qTvjdhD5i2.jpg",
+      "mapped_class_id": 1,
+      "mapped_class_name": "cracking",
+      "category_type": "target_issue",
+      "width": 540,
+      "height": 360,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0010",
+      "filename": "pexels-photo-29213468.jpg",
+      "relative_path": "AI/training_images/cracking/pexels-photo-29213468.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\cracking\\pexels-photo-29213468.jpg",
+      "mapped_class_id": 1,
+      "mapped_class_name": "cracking",
+      "category_type": "target_issue",
+      "width": 500,
+      "height": 750,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0012",
+      "filename": "road-3513113_1280.jpg",
+      "relative_path": "AI/training_images/cracking/road-3513113_1280.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\cracking\\road-3513113_1280.jpg",
+      "mapped_class_id": 1,
+      "mapped_class_name": "cracking",
+      "category_type": "target_issue",
+      "width": 853,
+      "height": 1280,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0014",
+      "filename": "2019_1$largeimg18_Friday_2019_080857446.jpg",
+      "relative_path": "AI/training_images/damaged_footpath/2019_1$largeimg18_Friday_2019_080857446.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\damaged_footpath\\2019_1$largeimg18_Friday_2019_080857446.jpg",
+      "mapped_class_id": 9,
+      "mapped_class_name": "damaged footpath",
+      "category_type": "target_issue",
+      "width": 660,
+      "height": 440,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0015",
+      "filename": "IMG_8365.jpg",
+      "relative_path": "AI/training_images/damaged_footpath/IMG_8365.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\damaged_footpath\\IMG_8365.jpg",
+      "mapped_class_id": 9,
+      "mapped_class_name": "damaged footpath",
+      "category_type": "target_issue",
+      "width": 1200,
+      "height": 675,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0016",
+      "filename": "footpath-arul.jpg",
+      "relative_path": "AI/training_images/damaged_footpath/footpath-arul.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\damaged_footpath\\footpath-arul.jpg",
+      "mapped_class_id": 9,
+      "mapped_class_name": "damaged footpath",
+      "category_type": "target_issue",
+      "width": 1600,
+      "height": 900,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0017",
+      "filename": "images.jpg",
+      "relative_path": "AI/training_images/damaged_footpath/images.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\damaged_footpath\\images.jpg",
+      "mapped_class_id": 9,
+      "mapped_class_name": "damaged footpath",
+      "category_type": "target_issue",
+      "width": 691,
+      "height": 444,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0023",
+      "filename": "2085_1_8_2026_18_58_28_2_DSC_4422.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/2085_1_8_2026_18_58_28_2_DSC_4422.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\2085_1_8_2026_18_58_28_2_DSC_4422.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 1200,
+      "height": 810,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0024",
+      "filename": "55107439.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/55107439.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\55107439.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 640,
+      "height": 480,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0025",
+      "filename": "Vepery-residents-wait-for-debris-removal-laying-of-road.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/Vepery-residents-wait-for-debris-removal-laying-of-road.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\Vepery-residents-wait-for-debris-removal-laying-of-road.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 400,
+      "height": 493,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0027",
+      "filename": "california-rock-slide-blocking-road-vertical-view-boulders-santa-susana-pass-chatsworth-neighborhood-los-angeles-431413470.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/california-rock-slide-blocking-road-vertical-view-boulders-santa-susana-pass-chatsworth-neighborhood-los-angeles-431413470.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\california-rock-slide-blocking-road-vertical-view-boulders-santa-susana-pass-chatsworth-neighborhood-los-angeles-431413470.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 600,
+      "height": 900,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0028",
+      "filename": "close-up-view-urban-roadside-featuring-broken-concrete-pieces-pavement-debris-rough-ground-texture-city-street-467386447.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/close-up-view-urban-roadside-featuring-broken-concrete-pieces-pavement-debris-rough-ground-texture-city-street-467386447.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\close-up-view-urban-roadside-featuring-broken-concrete-pieces-pavement-debris-rough-ground-texture-city-street-467386447.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 800,
+      "height": 600,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0029",
+      "filename": "landslide-blocking-los-angeles-canyon-road-storm-related-santa-susana-pass-san-fernando-valley-area-california-86562854.jpg",
+      "relative_path": "AI/training_images/debris_road_blockage/landslide-blocking-los-angeles-canyon-road-storm-related-santa-susana-pass-san-fernando-valley-area-california-86562854.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\debris_road_blockage\\landslide-blocking-los-angeles-canyon-road-storm-related-santa-susana-pass-san-fernando-valley-area-california-86562854.jpg",
+      "mapped_class_id": 8,
+      "mapped_class_name": "debris / road blockage",
+      "category_type": "target_issue",
+      "width": 600,
+      "height": 900,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0030",
+      "filename": "102921203.jpg",
+      "relative_path": "AI/training_images/manhole_defect/102921203.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\102921203.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 400,
+      "height": 225,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0032",
+      "filename": "71194359.jpg",
+      "relative_path": "AI/training_images/manhole_defect/71194359.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\71194359.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 400,
+      "height": 225,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0033",
+      "filename": "DAMAGED_MANHOLE_3.jpg",
+      "relative_path": "AI/training_images/manhole_defect/DAMAGED_MANHOLE_3.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\DAMAGED_MANHOLE_3.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 1200,
+      "height": 675,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0034",
+      "filename": "images (1).jpg",
+      "relative_path": "AI/training_images/manhole_defect/images (1).jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\images (1).jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 575,
+      "height": 224,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0035",
+      "filename": "images.jpg",
+      "relative_path": "AI/training_images/manhole_defect/images.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\images.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 686,
+      "height": 447,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0036",
+      "filename": "manholes-2026-07-13-06-39-04.jpg",
+      "relative_path": "AI/training_images/manhole_defect/manholes-2026-07-13-06-39-04.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\manholes-2026-07-13-06-39-04.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 640,
+      "height": 386,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0037",
+      "filename": "newindianexpress_2025-07-06_9pt625fc_Damaged.jpg",
+      "relative_path": "AI/training_images/manhole_defect/newindianexpress_2025-07-06_9pt625fc_Damaged.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\newindianexpress_2025-07-06_9pt625fc_Damaged.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 1200,
+      "height": 1600,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0038",
+      "filename": "rusted-manhole-cover-lies-open-cracked-asphalt-rusted-manhole-cover-lies-open-cracked-asphalt-surrounding-dirt-shows-signs-477414301.jpg",
+      "relative_path": "AI/training_images/manhole_defect/rusted-manhole-cover-lies-open-cracked-asphalt-rusted-manhole-cover-lies-open-cracked-asphalt-surrounding-dirt-shows-signs-477414301.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\manhole_defect\\rusted-manhole-cover-lies-open-cracked-asphalt-rusted-manhole-cover-lies-open-cracked-asphalt-surrounding-dirt-shows-signs-477414301.jpg",
+      "mapped_class_id": 3,
+      "mapped_class_name": "manhole defect",
+      "category_type": "target_issue",
+      "width": 600,
+      "height": 900,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0039",
+      "filename": "360_F_201419293_4CQG3pEVyRltQzy7ImZMJvWntCsMS4TM.jpg",
+      "relative_path": "AI/training_images/pothole/360_F_201419293_4CQG3pEVyRltQzy7ImZMJvWntCsMS4TM.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\pothole\\360_F_201419293_4CQG3pEVyRltQzy7ImZMJvWntCsMS4TM.jpg",
+      "mapped_class_id": 2,
+      "mapped_class_name": "pothole",
+      "category_type": "target_issue",
+      "width": 538,
+      "height": 360,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0042",
+      "filename": "damaged-asphalt-road-with-potholes-filled-with-water-at-sunset-photo.jpg",
+      "relative_path": "AI/training_images/pothole/damaged-asphalt-road-with-potholes-filled-with-water-at-sunset-photo.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\pothole\\damaged-asphalt-road-with-potholes-filled-with-water-at-sunset-photo.jpg",
+      "mapped_class_id": 2,
+      "mapped_class_name": "pothole",
+      "category_type": "target_issue",
+      "width": 613,
+      "height": 350,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0047",
+      "filename": "images (2).jpg",
+      "relative_path": "AI/training_images/road_divider_damage/images (2).jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\road_divider_damage\\images (2).jpg",
+      "mapped_class_id": 5,
+      "mapped_class_name": "road divider damage",
+      "category_type": "target_issue",
+      "width": 662,
+      "height": 463,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0050",
+      "filename": "two-lane-road-yellow-dividers-street-190144737.jpg",
+      "relative_path": "AI/training_images/road_divider_damage/two-lane-road-yellow-dividers-street-190144737.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\road_divider_damage\\two-lane-road-yellow-dividers-street-190144737.jpg",
+      "mapped_class_id": 5,
+      "mapped_class_name": "road divider damage",
+      "category_type": "target_issue",
+      "width": 425,
+      "height": 900,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0052",
+      "filename": "gettyimages-172362116-612x612.jpg",
+      "relative_path": "AI/training_images/street_light_fault/gettyimages-172362116-612x612.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\street_light_fault\\gettyimages-172362116-612x612.jpg",
+      "mapped_class_id": 7,
+      "mapped_class_name": "street light fault",
+      "category_type": "target_issue",
+      "width": 408,
+      "height": 612,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0053",
+      "filename": "images (1).jpg",
+      "relative_path": "AI/training_images/street_light_fault/images (1).jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\street_light_fault\\images (1).jpg",
+      "mapped_class_id": 7,
+      "mapped_class_name": "street light fault",
+      "category_type": "target_issue",
+      "width": 387,
+      "height": 516,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0054",
+      "filename": "images.jpg",
+      "relative_path": "AI/training_images/street_light_fault/images.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\street_light_fault\\images.jpg",
+      "mapped_class_id": 7,
+      "mapped_class_name": "street light fault",
+      "category_type": "target_issue",
+      "width": 515,
+      "height": 388,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0056",
+      "filename": "old-broken-street-lamp-streetlight-and-dirty-roll-down-shutters-in-dilapidated-suburb-deteriorated-urban-residential-district-2AJAMEC.jpg",
+      "relative_path": "AI/training_images/street_light_fault/old-broken-street-lamp-streetlight-and-dirty-roll-down-shutters-in-dilapidated-suburb-deteriorated-urban-residential-district-2AJAMEC.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\street_light_fault\\old-broken-street-lamp-streetlight-and-dirty-roll-down-shutters-in-dilapidated-suburb-deteriorated-urban-residential-district-2AJAMEC.jpg",
+      "mapped_class_id": 7,
+      "mapped_class_name": "street light fault",
+      "category_type": "target_issue",
+      "width": 1300,
+      "height": 956,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0090",
+      "filename": "gettyimages-1498472385-640x640.jpg",
+      "relative_path": "AI/training_images/waterlogging/gettyimages-1498472385-640x640.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\waterlogging\\gettyimages-1498472385-640x640.jpg",
+      "mapped_class_id": 4,
+      "mapped_class_name": "waterlogging",
+      "category_type": "target_issue",
+      "width": 768,
+      "height": 432,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0091",
+      "filename": "images (1).jpg",
+      "relative_path": "AI/training_images/waterlogging/images (1).jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\waterlogging\\images (1).jpg",
+      "mapped_class_id": 4,
+      "mapped_class_name": "waterlogging",
+      "category_type": "target_issue",
+      "width": 399,
+      "height": 501,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0092",
+      "filename": "images.jpg",
+      "relative_path": "AI/training_images/waterlogging/images.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\waterlogging\\images.jpg",
+      "mapped_class_id": 4,
+      "mapped_class_name": "waterlogging",
+      "category_type": "target_issue",
+      "width": 495,
+      "height": 619,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0093",
+      "filename": "istockphoto-1399215144-612x612.jpg",
+      "relative_path": "AI/training_images/waterlogging/istockphoto-1399215144-612x612.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\waterlogging\\istockphoto-1399215144-612x612.jpg",
+      "mapped_class_id": 4,
+      "mapped_class_name": "waterlogging",
+      "category_type": "target_issue",
+      "width": 612,
+      "height": 416,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    },
+    {
+      "image_id": "IMG_0094",
+      "filename": "waterlogging.jpg",
+      "relative_path": "AI/training_images/waterlogging/waterlogging.jpg",
+      "absolute_path": "C:\\Users\\Nithya\\CivicEye-Miniproject\\AI\\training_images\\waterlogging\\waterlogging.jpg",
+      "mapped_class_id": 4,
+      "mapped_class_name": "waterlogging",
+      "category_type": "target_issue",
+      "width": 900,
+      "height": 600,
+      "strategy": "none",
+      "status": "review_needed",
+      "review_reasons": [
+        "no_defect_detected_above_threshold"
+      ],
+      "box_count": 0,
+      "boxes": []
+    }
+  ]
+}

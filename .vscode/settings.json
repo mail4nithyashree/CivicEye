@@ -1,0 +1,22 @@
+{
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit",
+    "source.sortMembers": "explicit"
+  },
+  "python.defaultInterpreterPath": "C:\\Program Files\\Python313\\python.exe",
+  "python.analysis.extraPaths": [
+    "c:\\Users\\Nithya\\CivicEye-Miniproject",
+    "c:\\Users\\Nithya\\CivicEye-Miniproject\\scripts",
+    "C:\\Users\\Nithya\\AppData\\Roaming\\Python\\Python313\\site-packages",
+    "C:\\Users\\Nithya\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages",
+    "C:\\Program Files\\Python313\\Lib\\site-packages"
+  ],
+  "python.autoComplete.extraPaths": [
+    "c:\\Users\\Nithya\\CivicEye-Miniproject",
+    "c:\\Users\\Nithya\\CivicEye-Miniproject\\scripts",
+    "C:\\Users\\Nithya\\AppData\\Roaming\\Python\\Python313\\site-packages",
+    "C:\\Users\\Nithya\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages",
+    "C:\\Program Files\\Python313\\Lib\\site-packages"
+  ]
+}

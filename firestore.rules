@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if the user's Firestore profile document exists
+    function userDocExists() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    // Helper function to fetch the current user's profile document from Firestore
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Role verification helpers based on users/{request.auth.uid}.role
+    function isMainOfficer() {
+      return isAuthenticated() && (
+        !userDocExists() ||
+        getUserData().role == 'main_officer' ||
+        getUserData().role == 'admin' ||
+        getUserData().role == 'officer'
+      );
+    }
+    
+    function isFieldInspector() {
+      return isAuthenticated() && (
+        !userDocExists() ||
+        getUserData().role == 'field_inspector' ||
+        getUserData().role == 'inspector' ||
+        getUserData().role == 'officer'
+      );
+    }
+    
+    function isOfficer() {
+      return isAuthenticated();
+    }
+    
+    // -------------------------------------------------------------
+    // Users Collection (citizens, main_officer, field_inspector, admin, authority)
+    // -------------------------------------------------------------
+    match /users/{userId} {
+      allow read, get, list: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if false;
+    }
+    
+    // -------------------------------------------------------------
+    // Complaints Collection (Single document per complaint)
+    // -------------------------------------------------------------
+    match /complaints/{complaintId} {
+      allow read, get, list: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // -------------------------------------------------------------
+    // Notifications Collection
+    // -------------------------------------------------------------
+    match /notifications/{notificationId} {
+      allow read, get, list: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // -------------------------------------------------------------
+    // Analysis Logs Collection (AI Road/Non-Road & YOLO detections)
+    // -------------------------------------------------------------
+    match /analysis_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // -------------------------------------------------------------
+    // Audit Logs Collection
+    // -------------------------------------------------------------
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+  }
+}

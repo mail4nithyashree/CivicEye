@@ -1,0 +1,42 @@
+{
+  "train_classes": {
+    "alligator_cracking": 6,
+    "cracking": 6,
+    "damaged_footpath": 5,
+    "damaged_traffic_sign": 5,
+    "debris_road_blockage": 7,
+    "manhole_defect": 9,
+    "pothole": 6,
+    "road_divider_damage": 6,
+    "street_light_fault": 7,
+    "unrelated_images": 22,
+    "valid_road_no_issue": 9,
+    "waterlogging": 6
+  },
+  "test_classes": {
+    "alligator_cracking": 6,
+    "animals": 13,
+    "buildings": 9,
+    "cracking": 6,
+    "damaged_footpath": 5,
+    "damaged_traffic_sign": 5,
+    "debris_road_blockage": 7,
+    "flowers_plants": 26,
+    "food_objects": 10,
+    "manhole_defect": 9,
+    "other_road_issues": 3,
+    "people": 16,
+    "pothole": 6,
+    "random_non_road": 14,
+    "road_divider_damage": 6,
+    "street_light_fault": 7,
+    "unrelated_images": 22,
+    "valid_road_no_issue": 9,
+    "waterlogging": 6
+  },
+  "train_total": 94,
+  "test_total": 185,
+  "train_dups": 0,
+  "test_dups": 0,
+  "cross_dups": 94
+}

@@ -1,0 +1,30 @@
+# CivicEye 10-Class Multi-Infrastructure Issue Dataset Configuration
+# Generated automatically by CivicEye YOLO Dataset Exporter
+
+path: C:/Users/Nithya/CivicEye-Miniproject/dataset_working # Dataset root directory
+train: images/train      # Training images (relative to path)
+val: images/val          # Validation images (relative to path)
+test: images/test        # Test images (relative to path)
+
+# Classes
+nc: 10
+names:
+  0: alligator cracking
+  1: cracking
+  2: pothole
+  3: manhole defect
+  4: waterlogging
+  5: road divider damage
+  6: damaged traffic sign
+  7: street light fault
+  8: debris / road blockage
+  9: damaged footpath
+
+# Department Mapping Reference:
+# 0, 1, 2: Road Maintenance Department (ROAD)
+# 3:       Water Supply & Drainage Department (TWAD / DRAIN)
+# 4:       Stormwater / Drainage Department (DRAIN)
+# 5, 6:    Traffic / Road Safety Department (SAFETY)
+# 7:       Street Lighting Department (LIGHTING)
+# 8:       Solid Waste Management Department (SWM)
+# 9:       Public Works Department (PWD)

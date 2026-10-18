@@ -1,0 +1,52 @@
+{
+  "experiment_name": "experiment_yolov8_10class",
+  "base_architecture": "YOLOv8n / YOLOv8s (Ultralytics)",
+  "baseline_weights": "assets/models/best.onnx",
+  "baseline_classes": 3,
+  "target_classes": 10,
+  "dataset_yaml": "dataset_working/data.yaml",
+  "class_mapping": {
+    "0": "alligator cracking",
+    "1": "cracking",
+    "2": "pothole",
+    "3": "manhole defect",
+    "4": "waterlogging",
+    "5": "road divider damage",
+    "6": "damaged traffic sign",
+    "7": "street light fault",
+    "8": "debris / road blockage",
+    "9": "damaged footpath"
+  },
+  "recommended_training_hyperparameters": {
+    "imgsz": 640,
+    "batch_size": 8,
+    "epochs": 100,
+    "patience": 15,
+    "optimizer": "AdamW",
+    "lr0": 0.001,
+    "lrf": 0.01,
+    "device": "0 (GTX 1650 4GB)",
+    "workers": 2,
+    "augmentations": {
+      "hsv_h": 0.015,
+      "hsv_s": 0.7,
+      "hsv_v": 0.4,
+      "degrees": 0.0,
+      "translate": 0.1,
+      "scale": 0.5,
+      "shear": 0.0,
+      "perspective": 0.0,
+      "flipud": 0.0,
+      "fliplr": 0.5,
+      "mosaic": 1.0,
+      "mixup": 0.0
+    }
+  },
+  "hardware_environment": {
+    "gpu": "NVIDIA GeForce GTX 1650 (4096 MiB VRAM)",
+    "cuda_driver": "555.97 / CUDA 12.5",
+    "system_ram": "8 GB (7.76 GB)",
+    "python_version": "3.13.1 (64-bit)"
+  },
+  "status": "Awaiting training image ingestion (Train split currently 0 images)"
+}

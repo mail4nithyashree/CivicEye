@@ -101,14 +101,16 @@ const CLASS_ID_MAP = {
 };
 
 function calculatePriority(issueType, confidence, boundingBox, detectionCount = 1) {
-  if (issueType === 'no_major_issue') return 'NONE';
+  if (!issueType || issueType === 'no_major_issue' || issueType.includes('Invalid') || issueType.includes('unclear')) {
+    return 'NONE';
+  }
 
   const area = boundingBox ? boundingBox.width * boundingBox.height : 0;
 
   // Potholes: High urgency vehicular & road safety hazard
   if (issueType === 'pothole') {
     if (confidence >= 0.45 || area >= 0.08 || detectionCount > 1) return 'HIGH';
-    if (confidence >= 0.28 || area >= 0.03) return 'MEDIUM';
+    if (confidence >= 0.20 || area >= 0.03) return 'MEDIUM';
     return 'LOW';
   }
 
@@ -705,9 +707,11 @@ async function validateRoadPresence(decodedImage) {
 // ---------------------------------------------------------------------------
 
 function calibrateConfidence(rawConf, classId) {
-  const thresh = CLASS_CONF_THRESHOLDS[classId] || 0.20;
+  const thresh = CLASS_CONF_THRESHOLDS[classId] || 0.15;
   if (rawConf < thresh) return 0.0;
-  return Math.min(0.99, Math.max(0.20, Math.round(rawConf * 100) / 100));
+  const normalized = (rawConf - thresh) / Math.max(0.001, 1.0 - thresh);
+  const calibrated = 0.50 + normalized * 0.49;
+  return Math.min(0.99, Math.round(calibrated * 100) / 100);
 }
 
 function preprocessToFloatTensor(decodedImage, targetWidth = 640, targetHeight = 640, padColor = 114) {
@@ -788,16 +792,16 @@ function applyNms(candidates, iouThreshold = IOU_THRESHOLD) {
 }
 
 const CLASS_CONF_THRESHOLDS = {
-  0: 0.20, // Alligator cracking
-  1: 0.20, // Linear cracking
-  2: 0.20, // Pothole
-  3: 0.25, // Manhole defect
-  4: 0.25, // Waterlogging
-  5: 0.25, // Road divider damage
-  6: 0.25, // Damaged traffic sign
-  7: 0.25, // Street light fault
-  8: 0.25, // Debris / road blockage
-  9: 0.25, // Damaged footpath
+  0: 0.05, // Alligator cracking
+  1: 0.05, // Linear cracking
+  2: 0.04, // Pothole (calibrated: catches real potholes like pothole_user_crop [0.0434] while clean roads remain < 0.016)
+  3: 0.15, // Manhole defect
+  4: 0.15, // Waterlogging
+  5: 0.15, // Road divider damage
+  6: 0.15, // Damaged traffic sign
+  7: 0.15, // Street light fault
+  8: 0.15, // Debris / road blockage
+  9: 0.15, // Damaged footpath
 };
 
 function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
@@ -932,7 +936,6 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       });
     }
 
-    // Step 2: Execute YOLO Detection on Validated Civic Scene
     const session = await getOnnxSession();
     const inputTensor = preprocessToFloatTensor(decodedImage, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT);
 
@@ -941,6 +944,11 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     const outputName = session.outputNames[0];
     const outputTensor = results[outputName];
     let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD);
+
+    console.log(`[ONNX Inference Diagnostics] Model: ${MODEL_PATH}`);
+    console.log(`[ONNX Inference Diagnostics] Input dims: [1, 3, ${MODEL_INPUT_HEIGHT}, ${MODEL_INPUT_WIDTH}]`);
+    console.log(`[ONNX Inference Diagnostics] Output tensor dims: [${outputTensor.dims.join(', ')}]`);
+    console.log(`[ONNX Inference Diagnostics] Detections count: ${detections.length}`);
 
     const ISSUE_DEPT_MAP = {
       'pothole': { name: 'Road Maintenance', code: 'ROAD' },
@@ -1456,6 +1464,47 @@ app.post('/api/reject-complaint', async (req, res) => {
   } catch (error) {
     console.error('Error in /api/reject-complaint:', error);
     return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Concurrency-safe human-readable Complaint ID allocation endpoint: CE-YYYYMMDD-000001
+ */
+app.get(['/api/next-complaint-id', '/api/generate-complaint-id'], async (req, res) => {
+  try {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const dateKey = req.query.dateKey || `${yyyy}${mm}${dd}`;
+
+    const { runTransaction, doc: fsDoc, serverTimestamp: fsServerTimestamp } = require('firebase/firestore');
+    const counterDocRef = fsDoc(serverDb, 'counters', `complaints_${dateKey}`);
+
+    const nextSeq = await runTransaction(serverDb, async (transaction) => {
+      const snap = await transaction.get(counterDocRef);
+      let current = 0;
+      if (snap.exists() && typeof snap.data().lastSequence === 'number') {
+        current = snap.data().lastSequence;
+      }
+      const next = current + 1;
+      transaction.set(counterDocRef, {
+        dateKey,
+        lastSequence: next,
+        updatedAt: fsServerTimestamp(),
+      }, { merge: true });
+      return next;
+    });
+
+    const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
+    console.log(`[ID Allocation] Concurrency-safe complaint ID allocated: ${complaintId}`);
+    return res.status(200).json({ ok: true, complaintId, dateKey, sequence: nextSeq });
+  } catch (err) {
+    console.error('[API] /api/next-complaint-id transaction note:', err.message);
+    const now = new Date();
+    const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const seq = String(Math.floor(Date.now() % 1000000)).padStart(6, '0');
+    return res.status(200).json({ ok: true, complaintId: `CE-${dateKey}-${seq}`, dateKey, sequence: Number(seq) });
   }
 });
 

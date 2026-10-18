@@ -32,19 +32,21 @@ export const MODEL_INPUT_WIDTH = 640;
 export const MODEL_INPUT_HEIGHT = 640;
 
 export function calculatePriority(
-  issueType: DetectedIssueType,
+  issueType: DetectedIssueType | string,
   confidence: number,
   boundingBox?: { width: number; height: number },
   detectionCount = 1
 ): Priority {
-  if (issueType === 'no_major_issue') return 'NONE';
+  if (!issueType || issueType === 'no_major_issue' || issueType.includes('Invalid') || issueType.includes('unclear')) {
+    return 'NONE';
+  }
 
   const area = boundingBox ? boundingBox.width * boundingBox.height : 0;
 
   // Potholes: High urgency vehicular & road safety hazard
   if (issueType === 'pothole') {
     if (confidence >= 0.45 || area >= 0.08 || detectionCount > 1) return 'HIGH';
-    if (confidence >= 0.28 || area >= 0.03) return 'MEDIUM';
+    if (confidence >= 0.20 || area >= 0.03) return 'MEDIUM';
     return 'LOW';
   }
 

@@ -407,7 +407,7 @@ export default function ReportScreen() {
           issueType: issueName,
           confidence: result.confidence > 0 ? result.confidence : 90,
           confidenceRaw: result.confidenceRaw > 0 ? result.confidenceRaw : 0.9,
-          priority: result.hasDamage && result.priority !== 'NONE' ? result.priority : 'HIGH',
+          priority: result.priority || 'MEDIUM',
           department: 'Public Works Department',
           departmentCode: 'PWD',
           allDetections: result.allDetections,
@@ -445,7 +445,7 @@ export default function ReportScreen() {
           issueType: nonRoadIssue,
           confidence: result.confidence > 0 ? result.confidence : 90,
           confidenceRaw: result.confidenceRaw > 0 ? result.confidenceRaw : 0.9,
-          priority: result.hasDamage && result.priority !== 'NONE' ? result.priority : 'HIGH',
+          priority: result.priority || 'MEDIUM',
           department: classifiedDept.department,
           departmentCode: classifiedDept.departmentCode,
           allDetections: result.allDetections,
@@ -507,7 +507,7 @@ export default function ReportScreen() {
         ...result,
         issueType: result.issueType,
         hasDamage: true,
-        priority: result.priority && result.priority !== 'NONE' ? result.priority : 'HIGH',
+        priority: (result.priority && result.priority !== 'NONE') ? result.priority : 'MEDIUM',
         department: result.department || 'Road Maintenance Department',
         departmentCode: result.departmentCode || 'ROAD',
         confidence: result.confidence,
@@ -527,7 +527,7 @@ export default function ReportScreen() {
         issueType: fallbackDept.department,
         confidence: 0,
         confidenceRaw: 0,
-        priority: 'LOW',
+        priority: 'NONE',
         department: fallbackDept.department,
         departmentCode: fallbackDept.departmentCode,
         allDetections: [],
@@ -564,7 +564,7 @@ export default function ReportScreen() {
         activeDept,
         activeDeptCode
       );
-      const submitPriority = isNoMajorIssue ? 'LOW' : (analysis.priority && analysis.priority !== 'NONE' ? analysis.priority : 'HIGH');
+      const submitPriority = (isNoMajorIssue || analysis.priority === 'NONE') ? 'NONE' : (analysis.priority || 'NONE');
       const submitConfidence = isNoMajorIssue ? 0 : (analysis.confidence || 0);
 
       const submitResult = await submitComplaint({
@@ -616,7 +616,7 @@ export default function ReportScreen() {
         routingStatus: classifiedDept.routingStatus,
         routingMessage: classifiedDept.routingMessage,
         issueType: defaultIssue,
-        priority: analysis.priority,
+        priority: submitPriority,
         region: selectedRegion,
         estimatedBudget: undefined,
         estimatedBudgetDesc: 'Pending on-site manual estimation by Field Inspector',
@@ -854,7 +854,7 @@ export default function ReportScreen() {
       !isPWD;
     const displayRoutingStatus = submittedInfo?.routingStatus || classifiedDept?.routingStatus || (isPWD ? 'Moved to Public Works Department' : !isRoad ? `Moved to ${displayDept}` : 'Direct');
     const displayRoutingMessage = submittedInfo?.routingMessage || classifiedDept?.routingMessage || (isPWD ? 'Your complaint has been routed to the Public Works Department for public route maintenance.' : !isRoad ? `Your complaint has been moved to the ${displayDept} Department.` : undefined);
-    const priorityVal = submittedInfo?.priority || analysis?.priority || 'HIGH';
+    const priorityVal = submittedInfo?.priority || analysis?.priority || 'NONE';
     const displayBudget = submittedInfo?.estimatedBudget ?? (analysis ? getStandardEstimatedBudget(analysis.issueType, analysis.priority).budget : 18500);
     const displayDuration = submittedInfo?.estimatedResolutionDuration || getEstimatedResolutionDuration(priorityVal, submittedInfo?.issueType || analysis?.issueType || 'pothole', displayDept).durationText;
     const displayExpDate = submittedInfo?.expectedResolutionDate ? formatResolutionDate(submittedInfo.expectedResolutionDate) : formatResolutionDate(getEstimatedResolutionDuration(priorityVal, submittedInfo?.issueType || analysis?.issueType || 'pothole', displayDept).expectedResolutionDate);
@@ -1112,8 +1112,8 @@ export default function ReportScreen() {
             <View style={styles.refIdRow}>
               <Ionicons name="finger-print-outline" size={20} color={AppColors.primary} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.refIdLabel}>ISSUE REFERENCE ID</Text>
-                <Text style={styles.refIdValue}>#{referenceIssueId}</Text>
+                <Text style={styles.refIdLabel}>COMPLAINT ID</Text>
+                <Text style={styles.refIdValue}>Generated on Submission</Text>
               </View>
               <View style={styles.pendingBadge}>
                 <Text style={styles.pendingBadgeText}>Pending Submission</Text>
@@ -1147,7 +1147,7 @@ export default function ReportScreen() {
               </View>
               <View style={styles.resultItem}>
                 <Text style={styles.resultItemLabel}>Priority</Text>
-                <Text style={[styles.resultItemValueSmall, priorityTextColor('HIGH')]}>HIGH</Text>
+                <Text style={[styles.resultItemValueSmall, priorityTextColor(uncertainAnalysis?.priority || 'NONE')]}>{uncertainAnalysis?.priority || 'NONE'}</Text>
               </View>
             </View>
           </View>
@@ -1205,12 +1205,12 @@ export default function ReportScreen() {
                 setAnalysis({
                   isRoad: true,
                   roadConfidence: uncertainAnalysis?.roadConfidence || 0.85,
-                  hasDamage: true,
-                  analysisStatus: 'damage_detected',
+                  hasDamage: false,
+                  analysisStatus: 'unclear_image',
                   issueType: resolvedIssue,
-                  confidence: 85,
-                  confidenceRaw: 0.85,
-                  priority: 'HIGH',
+                  confidence: 0,
+                  confidenceRaw: 0,
+                  priority: 'NONE',
                   department: uDept.department || 'Road Maintenance Department',
                   departmentCode: uDept.departmentCode || 'ROAD',
                   allDetections: [],
@@ -1299,8 +1299,8 @@ export default function ReportScreen() {
             <View style={styles.refIdRow}>
               <Ionicons name="finger-print-outline" size={20} color={AppColors.primary} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.refIdLabel}>ISSUE REFERENCE ID</Text>
-                <Text style={styles.refIdValue}>#{referenceIssueId}</Text>
+                <Text style={styles.refIdLabel}>COMPLAINT ID</Text>
+                <Text style={styles.refIdValue}>Generated on Submission</Text>
               </View>
               <View style={styles.pendingBadge}>
                 <Text style={styles.pendingBadgeText}>Ready to Submit</Text>

@@ -10,6 +10,13 @@ const { PNG } = require('pngjs');
 
 dotenv.config({ path: path.resolve(__dirname, '.env.backend') });
 
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[SERVER UNHANDLED REJECTION]', reason);
+});
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -403,6 +410,7 @@ const ROAD_AND_INFRASTRUCTURE_CLASSES = new Set([
   640, // manhole (utility frame)
   825, // stone wall (macadam / paving stones)
   858, // tile roof (polygonal cracking blocks)
+  916, // granular asphalt macadam texture
 ]);
 
 // Plant / Flower / Flora & Insect related classes
@@ -451,7 +459,7 @@ const EXPLICIT_INDOOR_CLASSES = new Set([
   403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419,
   487, 508, 526, 530, 532, 537, 553, 559, 564, 574, 590, 604, 608, 620, 629, 638,
   645, 651, 664, 668, 673, 679, 688, 703, 720, 722, 735, 755, 759, 765, 768, 770,
-  776, 782, 785, 794, 804, 808, 831, 846, 852, 854, 857, 859, 861, 898, 900, 903, 916
+  776, 782, 785, 794, 804, 808, 831, 846, 852, 854, 857, 859, 861, 898, 900, 903
 ]);
 
 async function validateRoadPresence(decodedImage) {
@@ -495,25 +503,25 @@ async function validateRoadPresence(decodedImage) {
   const lumVariance = Math.max(0, (lumSqSum / (totalSamples || 1)) - (meanLum * meanLum));
   const avgGradient = laplacianSum / (totalSamples || 1);
 
-  // Pitch black image rejection
-  if (meanLum < 0.01 && lumVariance < 0.0002) {
+  // Severely dark / underexposed image rejection
+  if (meanLum < 0.08) {
     return {
       isRoad: false,
       isClear: false,
       confidence: 0.01,
       reason: 'dark_image',
-      message: 'The photo is pitch black or completely underexposed. Please capture with better lighting.',
+      message: 'The photo is pitch black or severely underexposed. Please capture with better lighting.',
     };
   }
 
-  // Pure white canvas rejection
-  if (meanLum > 0.99 && lumVariance < 0.0002) {
+  // Severely overexposed / washed out canvas rejection
+  if (meanLum > 0.85) {
     return {
       isRoad: false,
       isClear: false,
       confidence: 0.01,
       reason: 'overexposed_image',
-      message: 'The photo is completely blank or overexposed. Please capture a clear image.',
+      message: 'The photo is severely overexposed with harsh glare. Please capture a clear image.',
     };
   }
 
@@ -657,7 +665,7 @@ async function validateRoadPresence(decodedImage) {
 
         // Check indoor / furniture classes
         const indoorProb = top5.filter(item => EXPLICIT_INDOOR_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (indoorProb > 0.20 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.15)) {
+        if ((indoorProb > 0.20 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.15)) && lowSatRatio < 0.65) {
           return {
             isRoad: false,
             isClear: true,
@@ -679,7 +687,7 @@ async function validateRoadPresence(decodedImage) {
         }
 
         // Even with high low-sat, if road probability is negligible and top class is strongly confident non-road
-        if (roadProb < 0.02 && top.p > 0.25) {
+        if (roadProb < 0.02 && top.p > 0.25 && lowSatRatio < 0.70) {
           return {
             isRoad: false,
             isClear: true,
@@ -925,6 +933,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         roadConfidence: validation.confidence,
         analysisStatus: isUnclear ? 'unclear_image' : 'dissimilar_image',
         detectedIssue: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
+        issueType: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
         invalidReason: validation.reason || 'Invalid Image, give valid Issue Image!',
         confidence: 0,
         priority: 'NONE',
@@ -987,6 +996,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         roadConfidence: 0.95,
         analysisStatus: 'damage_detected',
         issueType: primary.issueType,
+        detectedIssue: primary.issueType,
         confidence: Math.round(primary.confidence * 100),
         confidenceRaw: primary.rawConfidence,
         priority: primary.priority,
@@ -1007,6 +1017,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       roadConfidence: validation.confidence,
       analysisStatus: 'no_major_issue',
       issueType: 'no_major_issue',
+      detectedIssue: 'no_major_issue',
       confidence: 0,
       confidenceRaw: 0,
       priority: 'NONE',
@@ -1468,43 +1479,63 @@ app.post('/api/reject-complaint', async (req, res) => {
 });
 
 /**
+ * Format system date dynamically in Asia/Kolkata timezone (YYYYMMDD)
+ */
+function getKolkataDateKey(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(date).replace(/-/g, '');
+}
+
+/**
  * Concurrency-safe human-readable Complaint ID allocation endpoint: CE-YYYYMMDD-000001
+ * Uses Asia/Kolkata timezone and atomic Firestore transaction.
  */
 app.get(['/api/next-complaint-id', '/api/generate-complaint-id'], async (req, res) => {
-  try {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const dateKey = req.query.dateKey || `${yyyy}${mm}${dd}`;
+  const rawDateKey = typeof req.query.dateKey === 'string' ? req.query.dateKey.trim() : '';
+  const dateKey = /^\d{8}$/.test(rawDateKey) ? rawDateKey : getKolkataDateKey(new Date());
 
-    const { runTransaction, doc: fsDoc, serverTimestamp: fsServerTimestamp } = require('firebase/firestore');
-    const counterDocRef = fsDoc(serverDb, 'counters', `complaints_${dateKey}`);
+  const { runTransaction, doc: fsDoc, serverTimestamp: fsServerTimestamp } = require('firebase/firestore');
+  const counterDocRef = fsDoc(serverDb, 'counters', `complaints_${dateKey}`);
 
-    const nextSeq = await runTransaction(serverDb, async (transaction) => {
-      const snap = await transaction.get(counterDocRef);
-      let current = 0;
-      if (snap.exists() && typeof snap.data().lastSequence === 'number') {
-        current = snap.data().lastSequence;
+  let attempts = 0;
+  const maxAttempts = 8;
+  while (attempts < maxAttempts) {
+    try {
+      const nextSeq = await runTransaction(serverDb, async (transaction) => {
+        const snap = await transaction.get(counterDocRef);
+        let current = 0;
+        if (snap.exists() && typeof snap.data().lastSequence === 'number') {
+          current = snap.data().lastSequence;
+        }
+        const next = current + 1;
+        transaction.set(counterDocRef, {
+          dateKey,
+          lastSequence: next,
+          updatedAt: fsServerTimestamp(),
+        }, { merge: true });
+        return next;
+      });
+
+      const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
+      console.log(`[ID Allocation] Concurrency-safe complaint ID allocated: ${complaintId}`);
+      return res.status(200).json({ ok: true, complaintId, dateKey, sequence: nextSeq });
+    } catch (err) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        console.error('[API] /api/next-complaint-id transaction failed after retries:', err.message);
+        return res.status(500).json({
+          ok: false,
+          message: 'Failed to allocate unique complaint ID: ' + err.message,
+        });
       }
-      const next = current + 1;
-      transaction.set(counterDocRef, {
-        dateKey,
-        lastSequence: next,
-        updatedAt: fsServerTimestamp(),
-      }, { merge: true });
-      return next;
-    });
-
-    const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
-    console.log(`[ID Allocation] Concurrency-safe complaint ID allocated: ${complaintId}`);
-    return res.status(200).json({ ok: true, complaintId, dateKey, sequence: nextSeq });
-  } catch (err) {
-    console.error('[API] /api/next-complaint-id transaction note:', err.message);
-    const now = new Date();
-    const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const seq = String(Math.floor(Date.now() % 1000000)).padStart(6, '0');
-    return res.status(200).json({ ok: true, complaintId: `CE-${dateKey}-${seq}`, dateKey, sequence: Number(seq) });
+      // Exponential backoff with random jitter for high concurrency
+      await new Promise(r => setTimeout(r, 40 * attempts + Math.random() * 80));
+    }
   }
 });
 
@@ -1563,6 +1594,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   mobile app inference requests. (Press Ctrl+C to stop)`);
   console.log('====================================================');
 });
+
+// Keep-alive timer to ensure Node event loop remains permanently active under Windows background task
+setInterval(() => {}, 10000);
 
 
 

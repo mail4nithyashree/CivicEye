@@ -88,7 +88,7 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         {/* Top row: ID + Region + status badge */}
         <View style={styles.topRow}>
           <View style={styles.idRegionCol}>
-            <Text style={[styles.id, isMismatchedRejection && styles.inactiveText]}>#{complaint.complaintId}</Text>
+            <Text style={[styles.id, isMismatchedRejection && styles.inactiveText]}>{complaint.complaintId}</Text>
             {complaint.region ? (
               <View style={[styles.regionBadge, isMismatchedRejection && styles.inactiveRegionBadge]}>
                 <Ionicons name="location-sharp" size={10} color={isMismatchedRejection ? AppColors.textSecondary : AppColors.primary} />

@@ -19,6 +19,7 @@ import {
   isRoadDepartment,
 } from '@/services/departmentMapping';
 import { analyzeCivicImage, type AnalysisResult } from '@/services/imageAnalysis';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 import { createNotification } from '@/services/notificationService';
 import { getResponsibleOfficerName } from '@/services/officerService';
 import { getEstimatedResolutionDuration, formatResolutionDate } from '@/services/resolutionDuration';
@@ -85,7 +86,6 @@ export default function ReportScreen() {
     imageUrl?: string;
   } | null>(null);
   const [uncertainAnalysis, setUncertainAnalysis] = useState<AnalysisResult | null>(null);
-  const [referenceIssueId, setReferenceIssueId] = useState<string>('CE-' + Math.floor(100000 + Math.random() * 900000));
   const [submittedInfo, setSubmittedInfo] = useState<{
     complaintId: string;
     department: string;
@@ -262,13 +262,10 @@ export default function ReportScreen() {
       return;
     }
 
-    const freshRefId = 'CE-' + Math.floor(100000 + Math.random() * 900000);
-    setReferenceIssueId(freshRefId);
-
     console.log('[SUBMIT] API URL:', getApiBaseUrl());
     console.log('[SUBMIT] Description:', description);
     console.log('[SUBMIT] Image URI:', imageUri);
-    console.log('[SUBMIT] Starting complaint analysis with Reference ID:', freshRefId);
+    console.log('[SUBMIT] Starting AI defect analysis for citizen submission');
 
     setStep('checking');
 
@@ -334,7 +331,7 @@ export default function ReportScreen() {
             recipientRole: 'citizen',
             complaintId: submitRes.id,
             title: 'Complaint Inactive: Invalid Image',
-            message: `Your complaint (#${submitRes.complaintId}) was marked inactive: Invalid Issue image, raise the complaint with the appropriate image!`,
+            message: `Your complaint (${submitRes.complaintId}) was marked inactive: Invalid Issue image, raise the complaint with the appropriate image!`,
             type: 'complaint_raised',
           });
         } catch (e) {
@@ -571,6 +568,7 @@ export default function ReportScreen() {
         citizenId: user.uid,
         citizenEmail: user.email ?? '',
         imageUri: cloudinaryUrl,
+        predictionContract: analysis.predictionContract,
         description: description.trim(),
         latitude: location.lat,
         longitude: location.lng,
@@ -650,7 +648,7 @@ export default function ReportScreen() {
           recipientRole: 'citizen',
           complaintId: submitResult.id,
           title: 'Complaint Registered Successfully',
-          message: `Your complaint #${submitResult.complaintId} in ${selectedRegion} has been registered with status: Submitted. A Coimbatore Field Inspector has been notified for on-site inspection and manual budget estimation.`,
+          message: `Your complaint ${submitResult.complaintId} in ${selectedRegion} has been registered with status: Submitted. A Coimbatore Field Inspector has been notified for on-site inspection and manual budget estimation.`,
           type: 'complaint_raised',
         });
 
@@ -659,7 +657,7 @@ export default function ReportScreen() {
           recipientRole: 'field_inspector',
           complaintId: submitResult.id,
           title: 'New Complaint Awaiting Field Inspection',
-          message: `New complaint #${submitResult.complaintId} in ${selectedRegion} (${defaultIssue}). On-site physical inspection and manual budget estimation required.`,
+          message: `New complaint ${submitResult.complaintId} in ${selectedRegion} (${defaultIssue}). On-site physical inspection and manual budget estimation required.`,
           type: 'field_verification_required',
         });
       } catch (notifErr) {
@@ -797,7 +795,23 @@ export default function ReportScreen() {
           <View style={[styles.actionButtonGroup, { marginTop: 18 }]}>
             <TouchableOpacity
               style={[styles.primaryBtn, { backgroundColor: '#059669' }]}
-              onPress={() => setStep('result')}
+              onPress={() => {
+                setAnalysis(prev => prev ? {
+                  ...prev,
+                  issueType: 'Road Surface (Inspection Requested)',
+                  hasDamage: false,
+                  priority: 'NONE',
+                  predictionContract: prev.predictionContract ? {
+                    ...prev.predictionContract,
+                    displayIssueName: 'Road Surface (Inspection Requested)',
+                    predictedClass: null,
+                    validationStatus: 'valid_clean_road',
+                    priority: 'NONE',
+                    severity: 'NONE',
+                  } : undefined,
+                } : null);
+                setStep('result');
+              }}
               accessible
               accessibilityRole="button"
               accessibilityLabel="Request Physical On-Site Inspection"
@@ -809,6 +823,7 @@ export default function ReportScreen() {
             <TouchableOpacity
               style={styles.secondaryBtn}
               onPress={() => {
+                setAnalysis(null);
                 if (imageUri) {
                   setRawPickedUri(imageUri);
                   setEditorVisible(true);
@@ -884,7 +899,7 @@ export default function ReportScreen() {
             {submittedInfo?.complaintId && (
               <>
                 <Text style={styles.successLabel}>Registered Complaint ID</Text>
-                <Text style={styles.successValueHighlight}>#{submittedInfo.complaintId}</Text>
+                <Text style={styles.successValueHighlight}>{submittedInfo.complaintId}</Text>
               </>
             )}
 
@@ -1033,7 +1048,7 @@ export default function ReportScreen() {
             {rejectedInfo?.complaintId && (
               <>
                 <Text style={styles.rejectedLabel}>Complaint ID</Text>
-                <Text style={styles.rejectedValueHighlight}>#{rejectedInfo.complaintId}</Text>
+                <Text style={styles.rejectedValueHighlight}>{rejectedInfo.complaintId}</Text>
               </>
             )}
 
@@ -1355,7 +1370,7 @@ export default function ReportScreen() {
             <Text style={styles.resultHeading}>Issue Summary</Text>
             <View style={styles.resultRow}>
               <Ionicons name="alert-circle" size={20} color={AppColors.primary} />
-              <Text style={styles.resultIssue}>{analysis.issueType}</Text>
+              <Text style={styles.resultIssue}>{formatDisplayIssueName(analysis.issueType)}</Text>
             </View>
             <View style={styles.resultGrid}>
               <View style={styles.resultItem}>

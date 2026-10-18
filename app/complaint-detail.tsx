@@ -188,7 +188,7 @@ export default function ComplaintDetailScreen() {
           <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerTitle}>#{complaint.complaintId}</Text>
+          <Text style={styles.headerTitle}>{complaint.complaintId}</Text>
           <Text style={styles.headerSub}>{complaint.region} • Coimbatore</Text>
         </View>
         <View style={{ width: 24 }} />

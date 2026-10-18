@@ -133,19 +133,34 @@ export async function runYoloInference(imageUri: string): Promise<YoloInferenceR
           detections,
           primaryDetection,
         };
+      } else {
+        console.warn('[YOLO] Backend returned non-ok payload:', data);
+        return {
+          isRoad: false,
+          isClear: false,
+          roadConfidence: 0,
+          analysisStatus: 'unclear_image',
+          invalidReason: data.invalidReason || 'inference_error',
+          message: data.message || 'Defect detection could not be completed reliably.',
+          detections: [],
+          primaryDetection: null,
+        };
       }
     } else {
-      console.log('[YOLO] Backend inference request note:', uploadRes.error || uploadRes.status);
+      console.warn('[YOLO] Backend inference request note:', uploadRes.error || uploadRes.status);
     }
-  } catch (err) {
-    console.log('[YOLO] Backend inference request note:', err);
+  } catch (err: any) {
+    console.warn('[YOLO] Backend inference request exception:', err?.message || err);
   }
 
-  // Fallback: If server is unavailable, return a safe no_major_issue rather than a fake mock
+  // Explicit failure outcome: NEVER fabricate "no_major_issue" when inference failed or timed out
   return {
-    isRoad: true,
-    roadConfidence: 0.7,
-    analysisStatus: 'no_major_issue',
+    isRoad: false,
+    isClear: false,
+    roadConfidence: 0,
+    analysisStatus: 'unclear_image',
+    invalidReason: 'inference_error',
+    message: 'Unable to connect to the defect detection service. Please try again or submit for manual review.',
     detections: [],
     primaryDetection: null,
   };

@@ -779,7 +779,7 @@ export default function MainOfficerDashboard() {
             </View>
 
             <Text style={styles.modalSub}>
-              Complaint #{selectedComplaint?.complaintId} • {selectedComplaint?.region}
+              Complaint {selectedComplaint?.complaintId} • {selectedComplaint?.region}
             </Text>
 
             <Text style={styles.modalLabel}>Select Responsible Department / Authority:</Text>
@@ -860,7 +860,7 @@ export default function MainOfficerDashboard() {
             </View>
 
             <Text style={styles.modalSub}>
-              Complaint #{statusActionComplaint?.complaintId} • {statusActionComplaint?.region}
+              Complaint {statusActionComplaint?.complaintId} • {statusActionComplaint?.region}
             </Text>
 
             <Text style={styles.modalLabel}>Execution Remarks & Details:</Text>

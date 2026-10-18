@@ -34,6 +34,12 @@ import {
   formatResolutionDate,
   type EstimatedDurationResult,
 } from './resolutionDuration';
+import {
+  type CivicPredictionContract,
+  type ValidationStatus,
+  type PredictionStatus,
+  formatDisplayIssueName,
+} from './predictionContract';
 import * as Location from 'expo-location';
 
 export type ComplaintStatus =
@@ -265,6 +271,9 @@ export interface Complaint {
 }
 
 export interface NewComplaintData {
+  complaintId?: string;
+  clientSubmissionId?: string;
+  predictionContract?: CivicPredictionContract;
   citizenId: string;
   citizenEmail: string;
   imageUri: string;
@@ -581,51 +590,71 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
 }
 
 /**
+ * Format system date dynamically in Asia/Kolkata timezone (YYYYMMDD)
+ */
+export function getKolkataDateKey(customDate: Date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(customDate).replace(/-/g, '');
+}
+
+/**
  * Concurrency-safe human-readable Complaint ID generator: CE-YYYYMMDD-000001
- * Uses Firestore transaction atomic counter per calendar date.
+ * Uses Firestore transaction atomic counter per calendar date in Asia/Kolkata timezone.
  * Guarantees zero collisions, uniqueness under concurrent submissions,
  * and stable readable IDs.
  */
 export async function generateMeaningfulComplaintId(customDate: Date = new Date()): Promise<string> {
-  const yyyy = customDate.getFullYear();
-  const mm = String(customDate.getMonth() + 1).padStart(2, '0');
-  const dd = String(customDate.getDate()).padStart(2, '0');
-  const dateKey = `${yyyy}${mm}${dd}`;
+  const dateKey = getKolkataDateKey(customDate);
+
+  let attempts = 0;
+  const maxAttempts = 6;
+  while (attempts < maxAttempts) {
+    try {
+      const counterRef = doc(db, 'counters', `complaints_${dateKey}`);
+      const nextSeq = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(counterRef);
+        let current = 0;
+        if (snap.exists() && typeof snap.data().lastSequence === 'number') {
+          current = snap.data().lastSequence;
+        }
+        const next = current + 1;
+        transaction.set(counterRef, {
+          dateKey,
+          lastSequence: next,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        return next;
+      });
+
+      const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
+      console.log(`[complaintService] Concurrency-safe ID allocated: ${complaintId}`);
+      return complaintId;
+    } catch (err) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        console.warn('[complaintService] Firestore transaction failed after retries, trying backend endpoint:', err);
+        break;
+      }
+      await new Promise(r => setTimeout(r, 40 * attempts + Math.random() * 80));
+    }
+  }
 
   try {
-    const counterRef = doc(db, 'counters', `complaints_${dateKey}`);
-    const nextSeq = await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(counterRef);
-      let current = 0;
-      if (snap.exists() && typeof snap.data().lastSequence === 'number') {
-        current = snap.data().lastSequence;
-      }
-      const next = current + 1;
-      transaction.set(counterRef, {
-        dateKey,
-        lastSequence: next,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      return next;
-    });
-
-    const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
-    console.log(`[complaintService] Concurrency-safe ID allocated: ${complaintId}`);
-    return complaintId;
-  } catch (err) {
-    console.warn('[complaintService] Firestore transaction failed, trying backend endpoint:', err);
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/api/next-complaint-id?dateKey=${dateKey}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.complaintId) return data.complaintId;
-      }
-    } catch (apiErr) {
-      console.warn('[complaintService] Backend endpoint fallback note:', apiErr);
+    const res = await fetch(`${getApiBaseUrl()}/api/next-complaint-id?dateKey=${dateKey}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.complaintId) return data.complaintId;
     }
-    const fallbackSeq = String(Math.floor(Date.now() % 1000000)).padStart(6, '0');
-    return `CE-${dateKey}-${fallbackSeq}`;
+  } catch (apiErr) {
+    console.warn('[complaintService] Backend endpoint fallback note:', apiErr);
   }
+  // Fail-hard policy: NEVER fall back to random/timestamp/fake ID. Throw an explicit error to prevent corrupted submissions.
+  throw new Error(`Failed to allocate a valid sequential complaint ID for date ${dateKey}. Please check your connection and retry.`);
 }
 
 // Backward-compatibility alias
@@ -745,6 +774,37 @@ export interface SubmitComplaintResult {
  * Automatically handles multi-department routing, notifications, and field inspector assignment queue.
  */
 export async function submitComplaint(data: NewComplaintData): Promise<SubmitComplaintResult> {
+  // Idempotency / duplicate submission protection:
+  // 1. If clientSubmissionId provided, check for existing complaint
+  if (data.clientSubmissionId) {
+    try {
+      const q = query(collection(db, 'complaints'), where('clientSubmissionId', '==', data.clientSubmissionId));
+      const existingSnap = await getDocs(q);
+      if (!existingSnap.empty) {
+        const docSnap = existingSnap.docs[0];
+        console.log(`[complaintService] Duplicate prevented via clientSubmissionId (${data.clientSubmissionId}). Reusing: ${docSnap.data().complaintId}`);
+        return { id: docSnap.id, complaintId: docSnap.data().complaintId };
+      }
+    } catch (dedupErr) {
+      console.warn('[complaintService] Dedup check note:', dedupErr);
+    }
+  }
+
+  // 2. If complaintId already allocated, prevent duplicate creation
+  if (data.complaintId) {
+    try {
+      const q = query(collection(db, 'complaints'), where('complaintId', '==', data.complaintId));
+      const existingSnap = await getDocs(q);
+      if (!existingSnap.empty) {
+        const docSnap = existingSnap.docs[0];
+        console.log(`[complaintService] Duplicate prevented via complaintId (${data.complaintId}). Reusing: ${docSnap.id}`);
+        return { id: docSnap.id, complaintId: data.complaintId };
+      }
+    } catch (dedupErr) {
+      console.warn('[complaintService] Dedup check note:', dedupErr);
+    }
+  }
+
   const complaintId = data.complaintId || await generateMeaningfulComplaintId();
   const isDissimilar = data.status === 'Dissimilar Image to the Issue' || data.analysisStatus === 'dissimilar_image' || (data.roadValidationResult === 'not_road' && data.rejectionType === 'IMAGE_MISMATCH');
   const isNoMajorIssue = data.analysisStatus === 'no_major_issue' || data.issueType === 'no_major_issue' || data.issueType === 'No supported issue detected' || data.issueType === 'Road Surface (Inspection Requested)';
@@ -784,8 +844,24 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     ? (data.issueType || 'No supported issue detected')
     : (isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : (data.issueType || 'pothole'));
 
+  const contract = data.predictionContract;
+  const rawPriority = isDissimilar || isNoMajorIssue ? 'NONE' : (data.priority || 'LOW');
+
   const complaintDocData: Record<string, any> = {
     complaintId,
+    clientSubmissionId: data.clientSubmissionId || null,
+
+    // Typed AI Prediction Contract Fields
+    predictedClass: contract?.predictedClass ?? (isDissimilar ? null : isNoMajorIssue ? null : (data.detectedIssue || data.issueType || null)),
+    displayIssueName: contract?.displayIssueName ?? formatDisplayIssueName(defaultIssue),
+    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+    confidenceRaw: contract?.confidenceRaw ?? ((typeof data.confidence === 'number' ? data.confidence : 0) / 100),
+    validationStatus: contract?.validationStatus ?? (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    predictionStatus: contract?.predictionStatus ?? (isDissimilar ? 'rejected' : 'success'),
+    predictionError: contract?.predictionError ?? null,
+    boundingBoxes: contract?.boundingBoxes ?? [],
+    issueCategory: activeDept,
+
     citizenId: data.citizenId,
     email: data.citizenEmail,
     citizenEmail: data.citizenEmail,
@@ -800,9 +876,8 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     locationSource: data.locationSource ?? 'current',
     locationAddress: data.locationAddress ?? '',
     issueType: defaultIssue,
-    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
-    priority: isDissimilar || isNoMajorIssue ? 'NONE' : (data.priority || 'LOW'),
-    severity: isDissimilar || isNoMajorIssue ? 'NONE' : (data.severity || data.priority || 'LOW'),
+    priority: rawPriority,
+    severity: isDissimilar || isNoMajorIssue ? 'NONE' : (data.severity || rawPriority),
     department: activeDept,
     responsibleDepartment: isNonRoad ? activeDept : (data.responsibleDepartment || activeDept),
     departmentCode: deptCode,

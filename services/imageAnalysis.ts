@@ -4,11 +4,18 @@
  * Coordinates the full AI inference lifecycle:
  * 1. Road Presence Validation
  * 2. YOLOv8 Damage Detection with NMS
- * 3. No Major Issue Resolution
+ * 3. Consistent Typed Prediction Contract Transformation
  */
 
 import { ISSUE_DEPARTMENT, type DetectedIssueType, type Priority } from './detectionConfig';
 import { runYoloInference, type Detection } from './yoloInference';
+import {
+  type CivicPredictionContract,
+  type ValidationStatus,
+  type PredictionStatus,
+  type PredictionPriority,
+  formatDisplayIssueName,
+} from './predictionContract';
 
 export interface AnalysisResult {
   isRoad: boolean;
@@ -26,6 +33,64 @@ export interface AnalysisResult {
   invalidReason?: string;
   message?: string;
   allDetections: Detection[];
+  predictionContract?: CivicPredictionContract;
+}
+
+export function toPredictionContract(result: AnalysisResult): CivicPredictionContract {
+  let validationStatus: ValidationStatus = 'valid_defect';
+  let predictionStatus: PredictionStatus = 'success';
+  let predictedClass: string | null = null;
+  let displayIssueName = formatDisplayIssueName(result.issueType);
+
+  if (!result.isRoad) {
+    if (result.isClear === false || result.analysisStatus === 'unclear_image' || result.invalidReason === 'inference_error') {
+      validationStatus = result.invalidReason === 'inference_error' ? 'inference_error' : 'unclear_image';
+      predictionStatus = 'unclear';
+      displayIssueName = 'Unclear Image (Manual Review Required)';
+    } else {
+      validationStatus = 'unrelated_image';
+      predictionStatus = 'rejected';
+      displayIssueName = 'Invalid Issue Image';
+    }
+  } else if (!result.hasDamage || result.analysisStatus === 'no_major_issue') {
+    validationStatus = 'valid_clean_road';
+    predictionStatus = 'success';
+    displayIssueName = 'Normal Road Surface (No Major Defect)';
+  } else {
+    validationStatus = 'valid_defect';
+    predictionStatus = 'success';
+    predictedClass = typeof result.issueType === 'string' ? result.issueType : null;
+    displayIssueName = formatDisplayIssueName(result.issueType);
+  }
+
+  const boundingBoxes = (result.allDetections || []).map(d => ({
+    x: d.boundingBox.x,
+    y: d.boundingBox.y,
+    width: d.boundingBox.width,
+    height: d.boundingBox.height,
+    classId: d.classId,
+    className: d.issueType,
+    confidence: d.confidence,
+  }));
+
+  return {
+    predictedClass,
+    displayIssueName,
+    confidence: result.confidence,
+    confidenceRaw: result.confidenceRaw,
+    validationStatus,
+    predictionStatus,
+    predictionError: result.invalidReason === 'inference_error' ? result.message : null,
+    boundingBoxes,
+    issueCategory: result.department,
+    department: result.department,
+    departmentCode: result.departmentCode,
+    priority: (result.priority as PredictionPriority) || 'NONE',
+    severity: (result.priority as PredictionPriority) || 'NONE',
+    isRoad: result.isRoad,
+    roadConfidence: result.roadConfidence,
+    message: result.message,
+  };
 }
 
 /**
@@ -37,8 +102,8 @@ export async function analyzeCivicImage(imageUri: string): Promise<AnalysisResul
   const result = await runYoloInference(imageUri);
 
   if (!result.isRoad) {
-    const isUnclear = result.isClear === false || result.analysisStatus === 'unclear_image';
-    return {
+    const isUnclear = result.isClear === false || result.analysisStatus === 'unclear_image' || result.invalidReason === 'inference_error';
+    const analysis: AnalysisResult = {
       isRoad: false,
       isDissimilar: result.isDissimilar ?? !isUnclear,
       isClear: result.isClear,
@@ -54,15 +119,17 @@ export async function analyzeCivicImage(imageUri: string): Promise<AnalysisResul
       invalidReason: result.invalidReason || (isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!'),
       message: result.message || (isUnclear
         ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
-        : 'Invalid Image, give valid Issue Image!'),
+        : 'Invalid Issue image. Please upload an appropriate image of the reported issue.'),
       allDetections: [],
     };
+    analysis.predictionContract = toPredictionContract(analysis);
+    return analysis;
   }
 
   if (!result.primaryDetection) {
-    return {
+    const analysis: AnalysisResult = {
       isRoad: true,
-      roadConfidence: result.roadConfidence ?? 0.9,
+      roadConfidence: result.roadConfidence ?? 0.95,
       hasDamage: false,
       analysisStatus: 'no_major_issue',
       issueType: 'no_major_issue',
@@ -71,17 +138,19 @@ export async function analyzeCivicImage(imageUri: string): Promise<AnalysisResul
       priority: 'NONE',
       department: 'Road Maintenance',
       departmentCode: 'ROAD',
-      message: 'No major road issues detected.',
+      message: 'Verified normal road surface. No major road defects detected.',
       allDetections: [],
     };
+    analysis.predictionContract = toPredictionContract(analysis);
+    return analysis;
   }
 
   const primary = result.primaryDetection;
   const dept = ISSUE_DEPARTMENT[primary.issueType] ?? { name: 'Road Maintenance', code: 'ROAD' };
 
-  return {
+  const analysis: AnalysisResult = {
     isRoad: true,
-    roadConfidence: result.roadConfidence ?? 0.9,
+    roadConfidence: result.roadConfidence ?? 0.95,
     hasDamage: true,
     analysisStatus: 'damage_detected',
     issueType: primary.issueType,
@@ -92,5 +161,6 @@ export async function analyzeCivicImage(imageUri: string): Promise<AnalysisResul
     departmentCode: dept.code,
     allDetections: result.detections,
   };
+  analysis.predictionContract = toPredictionContract(analysis);
+  return analysis;
 }
-

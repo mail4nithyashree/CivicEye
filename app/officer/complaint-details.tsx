@@ -423,7 +423,7 @@ export default function OfficerComplaintDetailsScreen() {
           <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center' }}>
-          <Text style={styles.headerTitle}>#{complaint.complaintId}</Text>
+          <Text style={styles.headerTitle}>{complaint.complaintId}</Text>
           <Text style={styles.headerSub}>{complaint.region} • {complaint.department || complaint.responsibleDepartment}</Text>
         </View>
         <View style={{ width: 24 }} />
@@ -1027,7 +1027,7 @@ export default function OfficerComplaintDetailsScreen() {
             </View>
 
             <Text style={styles.modalSub}>
-              Complaint #{complaint.complaintId} • {complaint.region}
+              Complaint {complaint.complaintId} • {complaint.region}
             </Text>
 
             <ScrollView style={{ maxHeight: 200 }}>

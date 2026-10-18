@@ -358,7 +358,7 @@ export default function NotificationsScreen() {
               )}
               {item.complaintId && (
                 <View style={styles.complaintIdBadge}>
-                  <Text style={styles.complaintIdBadgeText}>#{item.complaintId}</Text>
+                  <Text style={styles.complaintIdBadgeText}>{item.complaintId}</Text>
                 </View>
               )}
             </View>

@@ -620,7 +620,7 @@ export default function InspectionScreen() {
         </TouchableOpacity>
         <View style={{ alignItems: 'center' }}>
           <Text style={styles.headerTitle}>Field Inspector Verification</Text>
-          <Text style={styles.headerSub}>#{complaint.complaintId} • {complaint.region || selectedRegion}</Text>
+          <Text style={styles.headerSub}>{complaint.complaintId} • {complaint.region || selectedRegion}</Text>
         </View>
         <View style={{ width: 24 }} />
       </View>

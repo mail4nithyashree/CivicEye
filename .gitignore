@@ -68,4 +68,8 @@ app-example
 runs/
 experiments/
 
+# Backups and database dumps containing user data
+backups/
+*.backup.json
+
 

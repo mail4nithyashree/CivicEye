@@ -1,4 +1,6 @@
 import { AppColors } from '@/constants/colors';
+import ThemeToggle from '@/components/ThemeToggle';
+import { useAppTheme } from '@/context/ThemeContext';
 import { auth } from '@/firebaseConfig';
 import { subscribeToOfficerProfile, type Officer } from '@/services/officerService';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function OfficerProfileScreen() {
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
+  const { colors, isDark } = useAppTheme();
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [officer, setOfficer] = useState<Officer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,83 +127,83 @@ export default function OfficerProfileScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Back"
         >
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Officer Profile</Text>
-        <View style={{ width: 36 }} />
+        <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>Officer Profile</Text>
+        <ThemeToggle />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Avatar Card */}
-        <View style={styles.avatarSection}>
-          <View style={styles.avatar}>
+        <View style={[styles.avatarSection, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
+          <View style={[styles.avatar, isDark && { backgroundColor: colors.buttonPrimary }]}>
             <Ionicons name="person" size={48} color={AppColors.white} />
           </View>
-          <Text style={styles.nameText}>{officer?.name || 'Officer'}</Text>
-          <View style={styles.roleBadge}>
-            <Ionicons name="shield-checkmark" size={13} color={AppColors.primary} />
-            <Text style={styles.roleBadgeText}>
+          <Text style={[styles.nameText, isDark && { color: colors.textPrimary }]}>{officer?.name || 'Officer'}</Text>
+          <View style={[styles.roleBadge, isDark && { backgroundColor: colors.surfaceElevated }]}>
+            <Ionicons name="shield-checkmark" size={13} color={isDark ? colors.buttonPrimary : AppColors.primary} />
+            <Text style={[styles.roleBadgeText, isDark && { color: colors.textPrimary }]}>
               {officer?.role === 'main_officer' ? 'Main Officer' : 'Field Inspector'}
             </Text>
           </View>
-          <Text style={styles.deptSubtext}>
+          <Text style={[styles.deptSubtext, isDark && { color: colors.textSecondary }]}>
             {officer?.department || 'Road Maintenance Department'}
           </Text>
         </View>
 
         {/* Account Details Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionTitle}>Account Details</Text>
+        <View style={[styles.card, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
+          <Text style={[styles.cardSectionTitle, isDark && { color: colors.textPrimary }]}>Account Details</Text>
 
           <View style={styles.infoRow}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="mail-outline" size={18} color={AppColors.primary} />
+            <View style={[styles.iconCircle, isDark && { backgroundColor: colors.surfaceElevated }]}>
+              <Ionicons name="mail-outline" size={18} color={isDark ? colors.buttonPrimary : AppColors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Email Address</Text>
-              <Text style={styles.value}>{officer?.email || user?.email}</Text>
+              <Text style={[styles.label, isDark && { color: colors.textSecondary }]}>Email Address</Text>
+              <Text style={[styles.value, isDark && { color: colors.textPrimary }]}>{officer?.email || user?.email}</Text>
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, isDark && { backgroundColor: colors.borderLight }]} />
 
           <View style={styles.infoRow}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="business-outline" size={18} color={AppColors.primary} />
+            <View style={[styles.iconCircle, isDark && { backgroundColor: colors.surfaceElevated }]}>
+              <Ionicons name="business-outline" size={18} color={isDark ? colors.buttonPrimary : AppColors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Department</Text>
-              <Text style={styles.value}>
+              <Text style={[styles.label, isDark && { color: colors.textSecondary }]}>Department</Text>
+              <Text style={[styles.value, isDark && { color: colors.textPrimary }]}>
                 {officer?.department || 'Road Maintenance Department'}
               </Text>
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, isDark && { backgroundColor: colors.borderLight }]} />
 
           <View style={styles.infoRow}>
-            <View style={styles.iconCircle}>
+            <View style={[styles.iconCircle, isDark && { backgroundColor: colors.surfaceElevated }]}>
               <Ionicons name="checkmark-circle-outline" size={18} color={AppColors.success} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Account Status</Text>
-              <Text style={[styles.value, { color: AppColors.success, fontWeight: '700' }]}>
+              <Text style={[styles.label, isDark && { color: colors.textSecondary }]}>Account Status</Text>
+              <Text style={[styles.value, { color: isDark ? '#065F46' : AppColors.success, fontWeight: '700' }]}>
                 {officer?.active !== false ? 'Active Duty' : 'Inactive'}
               </Text>
             </View>
@@ -208,14 +211,14 @@ export default function OfficerProfileScreen() {
 
           {officer?.phone ? (
             <>
-              <View style={styles.divider} />
+              <View style={[styles.divider, isDark && { backgroundColor: colors.borderLight }]} />
               <View style={styles.infoRow}>
-                <View style={styles.iconCircle}>
-                  <Ionicons name="call-outline" size={18} color={AppColors.primary} />
+                <View style={[styles.iconCircle, isDark && { backgroundColor: colors.surfaceElevated }]}>
+                  <Ionicons name="call-outline" size={18} color={isDark ? colors.buttonPrimary : AppColors.primary} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Phone</Text>
-                  <Text style={styles.value}>{officer.phone}</Text>
+                  <Text style={[styles.label, isDark && { color: colors.textSecondary }]}>Phone</Text>
+                  <Text style={[styles.value, isDark && { color: colors.textPrimary }]}>{officer.phone}</Text>
                 </View>
               </View>
             </>
@@ -223,9 +226,9 @@ export default function OfficerProfileScreen() {
         </View>
 
         {/* Security & System Info */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionTitle}>CivicEye Officer Portal</Text>
-          <Text style={styles.portalDescription}>
+        <View style={[styles.card, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
+          <Text style={[styles.cardSectionTitle, isDark && { color: colors.textPrimary }]}>CivicEye Officer Portal</Text>
+          <Text style={[styles.portalDescription, isDark && { color: colors.textSecondary }]}>
             Authorized access strictly for civic infrastructure management. All status transitions, assignments, and verification remarks are logged with officer credentials.
           </Text>
         </View>

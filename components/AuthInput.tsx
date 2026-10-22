@@ -6,41 +6,55 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInputProps,
+  TextStyle,
+  ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 
 interface AuthInputProps extends TextInputProps {
   label: string;
   error?: string;
   isPassword?: boolean;
+  labelStyle?: TextStyle;
+  containerStyle?: ViewStyle;
 }
 
 export default function AuthInput({
   label,
   error,
   isPassword = false,
+  labelStyle,
+  containerStyle,
   ...props
 }: AuthInputProps) {
   const [focused, setFocused] = useState(false);
   const [visible, setVisible] = useState(false);
+  const { colors, isDark } = useAppTheme();
 
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.wrapper, containerStyle]}>
+      <Text style={[styles.label, { color: isDark ? colors.textOnDark : AppColors.textPrimary }, labelStyle]}>
+        {label}
+      </Text>
       <View
         style={[
           styles.inputRow,
-          focused && styles.inputFocused,
+          isDark && {
+            backgroundColor: colors.inputBg,
+            borderColor: colors.inputBorder,
+          },
+          focused && (isDark ? { borderColor: colors.borderFocus, borderWidth: 2 } : styles.inputFocused),
           !!error && styles.inputError,
         ]}
       >
         <TextInput
-          style={styles.input}
+          style={[styles.input, isDark && { color: colors.inputText }]}
           secureTextEntry={isPassword && !visible}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholderTextColor={AppColors.placeholder}
+          placeholderTextColor={isDark ? colors.inputPlaceholder : AppColors.placeholder}
           accessibilityLabel={label}
           accessibilityHint={props.accessibilityHint}
           {...props}
@@ -56,7 +70,7 @@ export default function AuthInput({
             <Ionicons
               name={visible ? 'eye-off-outline' : 'eye-outline'}
               size={22}
-              color={AppColors.textSecondary}
+              color={isDark ? colors.textSecondary : AppColors.textSecondary}
             />
           </TouchableOpacity>
         )}
@@ -103,3 +117,4 @@ const styles = StyleSheet.create({
     color: AppColors.error,
   },
 });
+

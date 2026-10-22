@@ -1,11 +1,13 @@
 import React from 'react';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
 import type { Complaint } from '@/services/complaintService';
 import { isRoadDepartment } from '@/services/departmentMapping';
 import { formatDisplayIssueName } from '@/services/predictionContract';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import StatusBadge from './StatusBadge';
 import CivicImage from './CivicImage';
 
@@ -15,15 +17,15 @@ interface Props {
 }
 
 function PriorityBadge({ priority }: { priority: string }) {
-  const cfg: Record<string, { bg: string; text: string }> = {
-    HIGH:   { bg: '#FEF2F2', text: AppColors.error },
-    MEDIUM: { bg: '#FFF7ED', text: '#C2410C' },
-    LOW:    { bg: '#F0FDF4', text: AppColors.success },
-    NONE:   { bg: '#F3F4F6', text: AppColors.textSecondary },
+  const cfg: Record<string, { bg: string; text: string; border: string }> = {
+    HIGH:   { bg: '#FEE2E2', text: '#991B1B', border: '#FECACA' },
+    MEDIUM: { bg: '#FEF3C7', text: '#92400E', border: '#FDE68A' },
+    LOW:    { bg: '#D1FAE5', text: '#065F46', border: '#A7F3D0' },
+    NONE:   { bg: '#E2E8F0', text: '#354F5A', border: '#CBD5E1' },
   };
   const c = cfg[priority.toUpperCase()] ?? cfg['LOW'];
   return (
-    <View style={[priorityStyles.badge, { backgroundColor: c.bg }]}>
+    <View style={[priorityStyles.badge, { backgroundColor: c.bg, borderColor: c.border, borderWidth: 1 }]}>
       <Text style={[priorityStyles.text, { color: c.text }]}>{priority.toUpperCase()}</Text>
     </View>
   );
@@ -31,10 +33,11 @@ function PriorityBadge({ priority }: { priority: string }) {
 
 const priorityStyles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, alignSelf: 'flex-start' },
-  text: { fontSize: 10, fontWeight: '700' },
+  text: { fontSize: 10, fontWeight: '800' },
 });
 
 function ComplaintCardComponent({ complaint, onPress }: Props) {
+  const { colors, isDark } = useAppTheme();
   const date = complaint.createdAt instanceof Date
     ? complaint.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
     : 'N/A';
@@ -59,6 +62,7 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
     <TouchableOpacity
       style={[
         styles.card,
+        { backgroundColor: colors.surface, borderColor: isDark ? '#334155' : colors.border },
         isMismatchedRejection && styles.inactiveCard,
       ]}
       onPress={onPress}
@@ -67,6 +71,16 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
       accessibilityRole="button"
       accessibilityLabel={`Complaint ${complaint.complaintId}, ${issue}, status ${complaint.status}`}
     >
+      {isDark && !isMismatchedRejection && (
+        <LinearGradient
+          colors={['#B0E0E6', '#FFFFFF']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
+
       {/* Complaint image */}
       <View style={isMismatchedRejection ? styles.inactiveImageWrap : undefined}>
         <CivicImage
@@ -89,10 +103,10 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         {/* Top row: ID + Region + status badge */}
         <View style={styles.topRow}>
           <View style={styles.idRegionCol}>
-            <Text style={[styles.id, isMismatchedRejection && styles.inactiveText]}>{complaint.complaintId}</Text>
+            <Text style={[styles.id, { color: isDark ? '#0F4C81' : colors.primary }, isMismatchedRejection && styles.inactiveText]}>{complaint.complaintId}</Text>
             {complaint.region ? (
               <View style={[styles.regionBadge, isMismatchedRejection && styles.inactiveRegionBadge]}>
-                <Ionicons name="location-sharp" size={10} color={isMismatchedRejection ? AppColors.textSecondary : AppColors.primary} />
+                <Ionicons name="location-sharp" size={10} color={isMismatchedRejection ? AppColors.textSecondary : colors.primary} />
                 <Text style={[styles.regionText, isMismatchedRejection && styles.inactiveRegionText]}>{complaint.region}</Text>
               </View>
             ) : null}
@@ -101,7 +115,7 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         </View>
 
         {/* Issue type */}
-        <Text style={[styles.issue, isMismatchedRejection && styles.inactiveIssue]}>{issue}</Text>
+        <Text style={[styles.issue, { color: isDark ? '#17202A' : colors.textPrimary }, isMismatchedRejection && styles.inactiveIssue]}>{issue}</Text>
 
         {/* Inactive Rejection Alert Banner */}
         {isMismatchedRejection && (
@@ -115,9 +129,9 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
 
         {/* Citizen Description Preview - High Visibility */}
         {complaint.description ? (
-          <View style={[styles.descPreviewBox, isMismatchedRejection && styles.inactiveDescPreviewBox]}>
-            <Ionicons name="chatbox-ellipses-outline" size={12} color={isMismatchedRejection ? AppColors.textSecondary : AppColors.primary} style={{ marginTop: 2 }} />
-            <Text style={[styles.descPreviewText, isMismatchedRejection && styles.inactiveDescText]} numberOfLines={2}>
+          <View style={[styles.descPreviewBox, isDark ? { backgroundColor: 'rgba(255, 255, 255, 0.75)', borderColor: '#94A3B8' } : { backgroundColor: '#F8FAFC', borderColor: colors.borderLight }, isMismatchedRejection && styles.inactiveDescPreviewBox]}>
+            <Ionicons name="chatbox-ellipses-outline" size={12} color={isMismatchedRejection ? colors.textSecondary : colors.primary} style={{ marginTop: 2 }} />
+            <Text style={[styles.descPreviewText, { color: isDark ? '#17202A' : colors.textSecondary }, isMismatchedRejection && styles.inactiveDescText]} numberOfLines={2}>
               {complaint.description}
             </Text>
           </View>
@@ -126,16 +140,21 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         {/* Department & Routing Tag (only if not mismatched rejection) */}
         {!isMismatchedRejection && (
           <View style={styles.deptBadgeRow}>
-            <View style={[styles.deptBadge, isMoved ? styles.deptBadgeMoved : styles.deptBadgeDirect]}>
+            <View style={[
+              styles.deptBadge,
+              isDark
+                ? { backgroundColor: 'rgba(255, 255, 255, 0.75)', borderColor: '#94A3B8', borderWidth: 1 }
+                : (isMoved ? styles.deptBadgeMoved : styles.deptBadgeDirect)
+            ]}>
               <Ionicons
                 name={isMoved ? "swap-horizontal" : "business-outline"}
                 size={12}
-                color={isMoved ? "#0369A1" : AppColors.textSecondary}
+                color={isMoved ? (isDark ? '#0369A1' : '#0369A1') : (isDark ? '#17202A' : colors.textSecondary)}
               />
               <Text
                 style={[
                   styles.deptBadgeText,
-                  isMoved ? styles.deptBadgeTextMoved : styles.deptBadgeTextDirect
+                  { color: isMoved ? '#0369A1' : (isDark ? '#17202A' : colors.textSecondary) },
                 ]}
                 numberOfLines={1}
               >
@@ -150,11 +169,13 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         {!isMismatchedRejection && (
           <View style={styles.metaRow}>
             <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>AI Confidence</Text>
-              <Text style={styles.metaValue}>{complaint.confidence}%</Text>
+              <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Confidence</Text>
+              <Text style={[styles.metaValue, { color: colors.textPrimary }]}>
+                {Math.round(complaint.confidence > 0 && complaint.confidence <= 1 ? complaint.confidence * 100 : (complaint.confidence || 0))}%
+              </Text>
             </View>
             <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>Severity</Text>
+              <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Severity / Priority</Text>
               <PriorityBadge priority={priority} />
             </View>
           </View>
@@ -167,15 +188,15 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
           return (
             <View style={styles.inspectionRow}>
               {budgetNum > 0 && (
-                <View style={styles.budgetChip}>
+                <View style={[styles.budgetChip, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
                   <Ionicons name="cash-outline" size={12} color="#0D9488" />
-                  <Text style={styles.budgetText}>₹{budgetNum.toLocaleString('en-IN')}{complaint.inspectionDetails ? '' : ' Est.'}</Text>
+                  <Text style={[styles.budgetText, isDark && { color: '#0F766E' }]}>₹{budgetNum.toLocaleString('en-IN')}{complaint.inspectionDetails ? '' : ' Est.'}</Text>
                 </View>
               )}
               {durationStr && (
-                <View style={styles.durationChip}>
-                  <Ionicons name="time-outline" size={12} color="#4F46E5" />
-                  <Text style={styles.durationText}>{durationStr} Est.</Text>
+                <View style={[styles.durationChip, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
+                  <Ionicons name="time-outline" size={12} color={isDark ? '#287D91' : '#4F46E5'} />
+                  <Text style={[styles.durationText, isDark && { color: '#172B35' }]}>{durationStr} Est.</Text>
                 </View>
               )}
             </View>
@@ -184,9 +205,9 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
 
         {/* Assigned Officer / Maintenance Authority */}
         {!isMismatchedRejection && (complaint.assignedOfficerName || complaint.assignedOfficer) ? (
-          <View style={styles.authorityRow}>
-            <Ionicons name="person-outline" size={13} color={AppColors.primary} />
-            <Text style={styles.authorityText} numberOfLines={1}>
+          <View style={[styles.authorityRow, isDark ? { backgroundColor: 'rgba(255, 255, 255, 0.75)', borderColor: '#94A3B8' } : { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+            <Ionicons name="person-outline" size={13} color={isDark ? '#0F4C81' : colors.primary} />
+            <Text style={[styles.authorityText, { color: isDark ? '#17202A' : colors.textPrimary }]} numberOfLines={1}>
               Officer: {complaint.assignedOfficerName || complaint.assignedOfficer}
             </Text>
           </View>
@@ -194,9 +215,9 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
 
         {/* Road & Maintenance Authority */}
         {!isMismatchedRejection && (complaint.maintenanceAuthority || complaint.inspectionDetails?.maintenanceAuthority) ? (
-          <View style={styles.authorityRow}>
-            <Ionicons name="business-outline" size={13} color={AppColors.primary} />
-            <Text style={styles.authorityText} numberOfLines={1}>
+          <View style={[styles.authorityRow, isDark ? { backgroundColor: 'rgba(255, 255, 255, 0.75)', borderColor: '#94A3B8' } : { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+            <Ionicons name="business-outline" size={13} color={isDark ? '#0F4C81' : colors.primary} />
+            <Text style={[styles.authorityText, { color: isDark ? '#17202A' : colors.textPrimary }]} numberOfLines={1}>
               {complaint.inspectionDetails?.maintenanceAuthority || complaint.maintenanceAuthority}
             </Text>
           </View>
@@ -204,9 +225,9 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
 
         {/* Multi-Department Involvement Alert Tag */}
         {!isMismatchedRejection && (complaint.isOtherDeptInvolved || (complaint as any).otherDepartmentInvolvement) && complaint.involvedDepartments?.length ? (
-          <View style={styles.multiDeptTag}>
+          <View style={[styles.multiDeptTag, isDark && { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
             <Ionicons name="git-network-outline" size={12} color="#B45309" />
-            <Text style={styles.multiDeptText} numberOfLines={1}>
+            <Text style={[styles.multiDeptText, { color: '#92400E' }]} numberOfLines={1}>
               Secondary Dept: {complaint.involvedDepartments.join(', ')}
             </Text>
           </View>
@@ -223,25 +244,25 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
         ) : null}
 
         {/* Date + location */}
-        <View style={styles.bottomRow}>
+        <View style={[styles.bottomRow, isDark && { borderTopColor: '#CBD5E1' }]}>
           <View style={styles.bottomItem}>
-            <Ionicons name="calendar-outline" size={12} color={AppColors.textSecondary} />
-            <Text style={styles.meta}>{date}</Text>
+            <Ionicons name="calendar-outline" size={12} color={isDark ? '#4B5563' : colors.textSecondary} />
+            <Text style={[styles.meta, { color: isDark ? '#17202A' : colors.textSecondary }]}>{date}</Text>
           </View>
           <View style={[styles.bottomItem, { flex: 1, justifyContent: 'flex-end' }]}>
             <Ionicons
               name={complaint.locationSource === 'map' ? 'map-outline' : 'location-outline'}
               size={12}
-              color={complaint.locationSource === 'map' ? AppColors.primary : AppColors.textSecondary}
+              color={isDark ? '#0F4C81' : colors.primary}
             />
-            <Text style={styles.meta} numberOfLines={1}>
+            <Text style={[styles.meta, { color: isDark ? '#17202A' : colors.textSecondary }]} numberOfLines={1}>
               {complaint.locationAddress || `${complaint.latitude.toFixed(4)}, ${complaint.longitude.toFixed(4)}`}
             </Text>
           </View>
         </View>
       </View>
 
-      <Ionicons name="chevron-forward" size={18} color={AppColors.placeholder} style={styles.chevron} />
+      <Ionicons name="chevron-forward" size={18} color={isDark ? '#17202A' : colors.textSecondary} style={styles.chevron} />
     </TouchableOpacity>
   );
 }

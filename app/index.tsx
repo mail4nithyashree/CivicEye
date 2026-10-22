@@ -1,4 +1,3 @@
-import { AppColors } from '@/constants/colors';
 import { auth, db } from '@/firebaseConfig';
 import { useRootNavigationState, useRouter } from 'expo-router';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -6,9 +5,11 @@ import { doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAppTheme } from '@/context/ThemeContext';
 
 export default function Index() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const rootNavigationState = useRootNavigationState();
   const navigatedRef = useRef(false);
 
@@ -67,9 +68,9 @@ export default function Index() {
   }, [rootNavigationState?.key, router]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
+        <ActivityIndicator size="large" color={colors.buttonPrimary} />
       </View>
     </SafeAreaView>
   );
@@ -78,7 +79,6 @@ export default function Index() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: AppColors.background,
   },
   center: {
     flex: 1,

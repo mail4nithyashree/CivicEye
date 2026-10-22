@@ -7,6 +7,7 @@ import { subscribeToOfficerProfile, type Officer } from '@/services/officerServi
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRootNavigationState, useRouter } from 'expo-router';
 import { onAuthStateChanged, type User } from 'firebase/auth';
+import { useAppTheme } from '@/context/ThemeContext';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -24,6 +25,7 @@ type FilterType = 'all' | 'pending' | 'verified' | 'assigned' | 'inprogress' | '
 
 export default function ComplaintManagementScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const rootNavigationState = useRootNavigationState();
   const { filter: filterParam } = useLocalSearchParams<{ filter?: string }>();
   const [user, setUser] = useState<User | null>(auth.currentUser);
@@ -217,41 +219,41 @@ export default function ComplaintManagementScreen() {
 
   if (loading || !officer) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
-        <Text style={styles.loadingText}>Loading Complaints Queue…</Text>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.buttonPrimary} />
+        <Text style={[styles.loadingText, { color: colors.textOnDarkSecondary }]}>Loading Complaints Queue…</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Back to Dashboard"
         >
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Road Defect Management</Text>
-          <Text style={styles.headerSubtitle}>Coimbatore Administration</Text>
+          <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>Road Defect Management</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textOnDarkSecondary }]}>Coimbatore Administration</Text>
         </View>
         <View style={{ width: 40 }} />
       </View>
 
       {/* Search Input */}
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={18} color={AppColors.placeholder} style={styles.searchIcon} />
+      <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Ionicons name="search" size={18} color={colors.inputPlaceholder} style={styles.searchIcon} />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: colors.textPrimary }]}
           placeholder="Search by ID, road, defect, or email…"
           value={searchText}
           onChangeText={setSearchText}
-          placeholderTextColor={AppColors.placeholder}
+          placeholderTextColor={colors.inputPlaceholder}
           returnKeyType="search"
           autoCapitalize="none"
         />
@@ -262,7 +264,7 @@ export default function ComplaintManagementScreen() {
             accessible
             accessibilityLabel="Clear search input"
           >
-            <Ionicons name="close-circle" size={18} color={AppColors.placeholder} />
+            <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         )}
       </View>
@@ -279,14 +281,16 @@ export default function ComplaintManagementScreen() {
             <TouchableOpacity
               style={[
                 styles.regionFilterChip,
-                selectedRegion === item && styles.regionFilterChipActive,
+                { backgroundColor: colors.card, borderColor: colors.border },
+                selectedRegion === item && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
               ]}
               onPress={() => setSelectedRegion(item)}
             >
               <Text
                 style={[
                   styles.regionFilterText,
-                  selectedRegion === item && styles.regionFilterTextActive,
+                  { color: colors.textPrimary },
+                  selectedRegion === item && { color: '#FFFFFF' },
                 ]}
               >
                 {item === 'All' ? 'All 4 Regions' : item}
@@ -309,15 +313,31 @@ export default function ComplaintManagementScreen() {
             const count = filterCounts[item.value] || 0;
             return (
               <TouchableOpacity
-                style={[styles.filterTab, isActive && styles.filterTabActive]}
+                style={[
+                  styles.filterTab,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                  isActive && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
+                ]}
                 onPress={() => setActiveFilter(item.value)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
+                <Text style={[
+                  styles.filterTabText,
+                  { color: colors.textPrimary },
+                  isActive && { color: '#FFFFFF', fontWeight: '700' },
+                ]}>
                   {item.label}
                 </Text>
-                <View style={[styles.filterCountBadge, isActive && styles.filterCountBadgeActive]}>
-                  <Text style={[styles.filterCountText, isActive && styles.filterCountTextActive]}>
+                <View style={[
+                  styles.filterCountBadge,
+                  { backgroundColor: colors.surfaceElevated },
+                  isActive && { backgroundColor: 'rgba(255, 255, 255, 0.25)' },
+                ]}>
+                  <Text style={[
+                    styles.filterCountText,
+                    { color: colors.textPrimary },
+                    isActive && { color: '#FFFFFF' },
+                  ]}>
                     {count}
                   </Text>
                 </View>
@@ -329,7 +349,7 @@ export default function ComplaintManagementScreen() {
 
       {/* Results Header Count */}
       <View style={styles.resultsInfoRow}>
-        <Text style={styles.resultsInfoText}>
+        <Text style={[styles.resultsInfoText, { color: colors.textOnDarkSecondary }]}>
           Showing {filteredComplaints.length} of {complaints.length} road complaint{complaints.length !== 1 ? 's' : ''}
         </Text>
       </View>
@@ -337,9 +357,9 @@ export default function ComplaintManagementScreen() {
       {/* Complaints List */}
       {filteredComplaints.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="document-text-outline" size={54} color={AppColors.placeholder} />
-          <Text style={styles.emptyTitle}>No Complaints Found</Text>
-          <Text style={styles.emptySubtitle}>
+          <Ionicons name="document-text-outline" size={54} color={colors.textOnDarkSecondary} />
+          <Text style={[styles.emptyTitle, { color: colors.textOnDark }]}>No Complaints Found</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textOnDarkSecondary }]}>
             {searchText
               ? `No complaints match "${searchText}".`
               : 'There are no complaints under this filter status.'}

@@ -1,6 +1,7 @@
 import ComplaintCard from '@/components/ComplaintCard';
 import { ALL_COIMBATORE_REGIONS, getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { subscribeToAllComplaints, isInvalidImageComplaint, type Complaint } from '@/services/complaintService';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -34,6 +35,7 @@ const STATUS_FILTERS = ['All', 'Verified', 'Assigned', 'In Progress', 'Resolved'
 
 export default function ExploreScreen() {
   const router = useRouter();
+  const { colors, isDark } = useAppTheme();
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,7 +96,7 @@ export default function ExploreScreen() {
   const totalResolved = validComplaints.filter(c => c.status === 'Resolved' || c.status === 'Closed').length;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <FlatList
         data={filtered}
         keyExtractor={keyExtractor}
@@ -109,7 +111,7 @@ export default function ExploreScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => setRefreshing(true)}
-            tintColor={AppColors.primary}
+            tintColor={colors.primary}
           />
         }
         ListHeaderComponent={
@@ -117,47 +119,47 @@ export default function ExploreScreen() {
             {/* Top Brand Header */}
             <View style={styles.brandRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.title}>Civic Transparency Hub</Text>
-                <Text style={styles.subtitle}>Coimbatore Road Maintenance & Sanctioned Budgets</Text>
+                <Text style={[styles.title, { color: colors.textOnDark }]}>Civic Transparency Hub</Text>
+                <Text style={[styles.subtitle, { color: colors.textOnDarkSecondary }]}>Coimbatore Road Maintenance & Sanctioned Budgets</Text>
               </View>
-              <View style={styles.iconCircle}>
-                <Ionicons name="map-outline" size={24} color={AppColors.primary} />
+              <View style={[styles.iconCircle, isDark && { backgroundColor: colors.surfaceElevated }]}>
+                <Ionicons name="map-outline" size={24} color={isDark ? colors.buttonPrimary : AppColors.primary} />
               </View>
             </View>
 
             {/* City-Wide Impact & Budget Metrics Banner */}
-            <View style={styles.statsCard}>
+            <View style={[styles.statsCard, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
               <View style={styles.statsHeader}>
-                <Ionicons name="shield-checkmark" size={16} color="#0D9488" />
-                <Text style={styles.statsHeaderText}>Coimbatore Infrastructure Allocation</Text>
+                <Ionicons name="shield-checkmark" size={16} color={isDark ? colors.buttonPrimary : '#0D9488'} />
+                <Text style={[styles.statsHeaderText, isDark && { color: colors.textPrimary }]}>Coimbatore Infrastructure Allocation</Text>
               </View>
 
               <View style={styles.statsGrid}>
                 <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>Sanctioned Budget</Text>
-                  <Text style={styles.statValueGreen}>₹{totalBudget.toLocaleString('en-IN')}</Text>
+                  <Text style={[styles.statLabel, isDark && { color: colors.textSecondary }]}>Sanctioned Budget</Text>
+                  <Text style={[styles.statValueGreen, isDark && { color: colors.textPrimary }]}>₹{totalBudget.toLocaleString('en-IN')}</Text>
                 </View>
-                <View style={styles.statDivider} />
+                <View style={[styles.statDivider, isDark && { backgroundColor: colors.borderLight }]} />
                 <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>Field Verified</Text>
-                  <Text style={styles.statValue}>{totalInspected}</Text>
+                  <Text style={[styles.statLabel, isDark && { color: colors.textSecondary }]}>Field Verified</Text>
+                  <Text style={[styles.statValue, isDark && { color: colors.textPrimary }]}>{totalInspected}</Text>
                 </View>
-                <View style={styles.statDivider} />
+                <View style={[styles.statDivider, isDark && { backgroundColor: colors.borderLight }]} />
                 <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>In Progress</Text>
-                  <Text style={styles.statValueBlue}>{totalInProgress}</Text>
+                  <Text style={[styles.statLabel, isDark && { color: colors.textSecondary }]}>In Progress</Text>
+                  <Text style={[styles.statValueBlue, isDark && { color: colors.textPrimary }]}>{totalInProgress}</Text>
                 </View>
-                <View style={styles.statDivider} />
+                <View style={[styles.statDivider, isDark && { backgroundColor: colors.borderLight }]} />
                 <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>Resolved</Text>
-                  <Text style={styles.statValueTeal}>{totalResolved}</Text>
+                  <Text style={[styles.statLabel, isDark && { color: colors.textSecondary }]}>Resolved</Text>
+                  <Text style={[styles.statValueTeal, isDark && { color: colors.textPrimary }]}>{totalResolved}</Text>
                 </View>
               </View>
             </View>
 
             {/* Coimbatore 4-Region Filter */}
             <View style={styles.filterSection}>
-              <Text style={styles.filterSectionTitle}>Coimbatore Region</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textOnDark }]}>Coimbatore Region</Text>
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -168,10 +170,18 @@ export default function ExploreScreen() {
                   const active = selectedRegion === item;
                   return (
                     <TouchableOpacity
-                      style={[styles.regionChip, active && styles.regionChipActive]}
+                      style={[
+                        styles.regionChip,
+                        isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+                        active && (isDark ? { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary } : styles.regionChipActive)
+                      ]}
                       onPress={() => setSelectedRegion(item)}
                     >
-                      <Text style={[styles.regionChipText, active && styles.regionChipTextActive]}>
+                      <Text style={[
+                        styles.regionChipText,
+                        isDark && { color: colors.textPrimary },
+                        active && [styles.regionChipTextActive, isDark && { color: colors.white }]
+                      ]}>
                         {item === 'All' ? 'All 4 Regions' : item}
                       </Text>
                     </TouchableOpacity>
@@ -182,7 +192,7 @@ export default function ExploreScreen() {
 
             {/* Category Filter Pills */}
             <View style={styles.filterSection}>
-              <Text style={styles.filterSectionTitle}>Filter by Road Defect</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textOnDark }]}>Filter by Road Defect</Text>
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -193,10 +203,18 @@ export default function ExploreScreen() {
                   const active = selectedCategory === item;
                   return (
                     <TouchableOpacity
-                      style={[styles.filterChip, active && styles.filterChipActive]}
+                      style={[
+                        styles.filterChip,
+                        isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+                        active && (isDark ? { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary } : styles.filterChipActive)
+                      ]}
                       onPress={() => setSelectedCategory(item)}
                     >
-                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                      <Text style={[
+                        styles.filterChipText,
+                        isDark && { color: colors.textPrimary },
+                        active && [styles.filterChipTextActive, isDark && { color: colors.white }]
+                      ]}>
                         {item === 'All' ? 'All Defects' : item.charAt(0).toUpperCase() + item.slice(1)}
                       </Text>
                     </TouchableOpacity>
@@ -207,7 +225,7 @@ export default function ExploreScreen() {
 
             {/* Status Filter Pills */}
             <View style={styles.filterSection}>
-              <Text style={styles.filterSectionTitle}>Filter by Status</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textOnDark }]}>Filter by Status</Text>
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -218,10 +236,18 @@ export default function ExploreScreen() {
                   const active = selectedStatus === item;
                   return (
                     <TouchableOpacity
-                      style={[styles.statusChip, active && styles.statusChipActive]}
+                      style={[
+                        styles.statusChip,
+                        isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+                        active && (isDark ? { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary } : styles.statusChipActive)
+                      ]}
                       onPress={() => setSelectedStatus(item)}
                     >
-                      <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                      <Text style={[
+                        styles.statusChipText,
+                        isDark && { color: colors.textPrimary },
+                        active && [styles.statusChipTextActive, isDark && { color: colors.white }]
+                      ]}>
                         {item === 'All' ? 'All Statuses' : item}
                       </Text>
                     </TouchableOpacity>
@@ -231,7 +257,7 @@ export default function ExploreScreen() {
             </View>
 
             <View style={styles.resultsHeader}>
-              <Text style={styles.resultsCount}>
+              <Text style={[styles.resultsCount, { color: colors.textOnDarkSecondary }]}>
                 Showing {filtered.length} {filtered.length === 1 ? 'road issue' : 'road issues'} in Coimbatore
               </Text>
             </View>
@@ -240,14 +266,14 @@ export default function ExploreScreen() {
         ListEmptyComponent={
           loading ? (
             <View style={styles.emptyContainer}>
-              <ActivityIndicator size="large" color={AppColors.primary} />
-              <Text style={styles.emptyText}>Loading community road records…</Text>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.emptyText, { color: colors.textOnDarkSecondary }]}>Loading community road records…</Text>
             </View>
           ) : (
             <View style={styles.emptyContainer}>
-              <Ionicons name="checkmark-circle-outline" size={48} color={AppColors.placeholder} />
-              <Text style={styles.emptyTitle}>No matching reports found</Text>
-              <Text style={styles.emptyText}>No road defects in this category or region.</Text>
+              <Ionicons name="checkmark-circle-outline" size={48} color={colors.disabled} />
+              <Text style={[styles.emptyTitle, { color: colors.textOnDark }]}>No matching reports found</Text>
+              <Text style={[styles.emptyText, { color: colors.textOnDarkSecondary }]}>No road defects in this category or region.</Text>
             </View>
           )
         }

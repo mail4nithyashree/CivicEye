@@ -1,5 +1,7 @@
 import ComplaintCard from '@/components/ComplaintCard';
 import QuickActionCard from '@/components/QuickActionCard';
+import ThemeToggle from '@/components/ThemeToggle';
+import { useAppTheme } from '@/context/ThemeContext';
 import { AppColors } from '@/constants/colors';
 import { auth, db } from '@/firebaseConfig';
 import { subscribeToUserComplaints, type Complaint } from '@/services/complaintService';
@@ -12,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -168,10 +171,11 @@ export default function HomeScreen() {
   const resolved = complaints.filter(c => ['Resolved', 'Closed'].includes(c.status)).length;
   const recent = complaints.slice(0, 3);
 
+  const { colors, isDark } = useAppTheme();
   const firstName = displayName.split(' ')[0];
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -179,25 +183,26 @@ export default function HomeScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => setRefreshing(true)}
-            tintColor={AppColors.primary}
+            tintColor={colors.primary}
           />
         }
       >
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.brandRow}>
-            <Ionicons name="eye" size={26} color={AppColors.primary} />
-            <Text style={styles.brandName}>CivicEye</Text>
+            <Ionicons name="eye" size={26} color={colors.primary} />
+            <Text style={[styles.brandName, { color: colors.primary }]}>CivicEye</Text>
           </View>
           <View style={styles.headerActions}>
+            <ThemeToggle />
             <TouchableOpacity
-              style={styles.iconBtn}
+              style={[styles.iconBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
               onPress={() => router.push('/notifications')}
               accessible
               accessibilityRole="button"
               accessibilityLabel="Notifications"
             >
-              <Ionicons name="notifications-outline" size={22} color={AppColors.textPrimary} />
+              <Ionicons name="notifications-outline" size={22} color={colors.textPrimary} />
               {unreadNotifCount > 0 && (
                 <View style={styles.notifBadge}>
                   <Text style={styles.notifBadgeText}>
@@ -221,41 +226,64 @@ export default function HomeScreen() {
 
         {/* Greeting */}
         <View style={styles.greetingSection}>
-          <Text style={styles.greeting}>Hello, {firstName} 👋</Text>
-          <Text style={styles.greetingSub}>Coimbatore Road Management • Maniyakarampalayam, Ganapathy, Gandhipuram, Peelamedu</Text>
+          <Text style={[styles.greeting, { color: colors.textOnDark }]}>Hello, {firstName} 👋</Text>
+          <Text style={[styles.greetingSub, { color: colors.textOnDarkSecondary }]}>Coimbatore Road Management • Maniyakarampalayam, Ganapathy, Peelamedu</Text>
         </View>
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatCard label="Total" value={total} color={AppColors.primary} />
-          <StatCard label="Active" value={active} color="#C2410C" />
-          <StatCard label="Resolved" value={resolved} color={AppColors.success} />
+          <StatCard
+            label="Total"
+            value={total}
+            color={isDark ? '#1F6170' : colors.primary}
+            cardBg={colors.surface}
+            textColor={colors.textSecondary}
+            borderColor={colors.border}
+          />
+          <StatCard
+            label="Active"
+            value={active}
+            color={isDark ? '#B45309' : '#F97316'}
+            cardBg={colors.surface}
+            textColor={colors.textSecondary}
+            borderColor={colors.border}
+          />
+          <StatCard
+            label="Resolved"
+            value={resolved}
+            color={isDark ? '#047857' : '#10B981'}
+            cardBg={colors.surface}
+            textColor={colors.textSecondary}
+            borderColor={colors.border}
+          />
         </View>
 
-        {/* Primary Report Card */}
-        <TouchableOpacity
-          style={styles.reportCard}
-          onPress={() => router.push('/report')}
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel="Report an Issue"
-          accessibilityHint="Tap to report a new civic issue"
-        >
-          <View style={styles.reportCardLeft}>
-            <Text style={styles.reportCardTitle}>Report an Issue</Text>
-            <Text style={styles.reportCardSub}>Spot a problem? Report it and help improve your community.</Text>
-            <View style={styles.reportCardBtn}>
-              <Text style={styles.reportCardBtnText}>Get Started</Text>
-              <Ionicons name="arrow-forward" size={16} color={AppColors.white} />
+        {/* Primary Report Card — Hidden automatically after first complaint */}
+        {!loadingComplaints && complaints.length === 0 && (
+          <TouchableOpacity
+            style={[styles.reportCard, { backgroundColor: isDark ? colors.buttonPrimary : AppColors.primary }]}
+            onPress={() => router.push('/report')}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="Report an Issue"
+            accessibilityHint="Tap to report a new civic issue"
+          >
+            <View style={styles.reportCardLeft}>
+              <Text style={styles.reportCardTitle}>Report an Issue</Text>
+              <Text style={styles.reportCardSub}>Spot a problem? Report it and help improve your community.</Text>
+              <View style={styles.reportCardBtn}>
+                <Text style={styles.reportCardBtnText}>Get Started</Text>
+                <Ionicons name="arrow-forward" size={16} color={AppColors.white} />
+              </View>
             </View>
-          </View>
-          <View style={styles.reportCardIcon}>
-            <Ionicons name="camera" size={40} color="rgba(255,255,255,0.9)" />
-          </View>
-        </TouchableOpacity>
+            <View style={styles.reportCardIcon}>
+              <Ionicons name="camera" size={40} color="rgba(255,255,255,0.9)" />
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* Quick Actions */}
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textOnDark }]}>Quick Actions</Text>
         <View style={styles.quickActionsGrid}>
           <QuickActionCard
             icon="add-circle-outline"
@@ -275,7 +303,6 @@ export default function HomeScreen() {
             onPress={() => router.push('/explore')}
             accessibilityHint="View city-wide road repair transparency and budgets"
           />
-
           <QuickActionCard
             icon="notifications-outline"
             label="Notifications"
@@ -286,7 +313,7 @@ export default function HomeScreen() {
 
         {/* Recent Complaints */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Complaints</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textOnDark, marginBottom: 0 }]}>Recent Complaints</Text>
           {complaints.length > 0 && (
             <TouchableOpacity
               onPress={() => router.push('/my-complaints')}
@@ -294,20 +321,29 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="View all complaints"
             >
-              <Text style={styles.viewAll}>View All</Text>
+              <Text style={[styles.viewAll, { color: isDark ? '#B0E0E6' : colors.primary }]}>View All</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {loadingComplaints ? (
-          <ActivityIndicator color={AppColors.primary} style={{ marginVertical: 24 }} />
+          <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
         ) : recent.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="document-text-outline" size={48} color={AppColors.placeholder} />
-            <Text style={styles.emptyTitle}>No complaints yet</Text>
-            <Text style={styles.emptySubtitle}>Your submitted complaints will appear here.</Text>
+          <View style={[styles.emptyState, { backgroundColor: colors.surface, borderColor: isDark ? '#334155' : colors.border, borderWidth: 1, overflow: 'hidden' }]}>
+            {isDark && (
+              <LinearGradient
+                colors={['#B0E0E6', '#FFFFFF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+            )}
+            <Ionicons name="document-text-outline" size={48} color={isDark ? '#0F4C81' : colors.textSecondary} />
+            <Text style={[styles.emptyTitle, { color: isDark ? '#17202A' : colors.textPrimary }]}>No complaints yet</Text>
+            <Text style={[styles.emptySubtitle, { color: isDark ? '#17202A' : colors.textSecondary }]}>Your submitted complaints will appear here.</Text>
             <TouchableOpacity
-              style={styles.emptyBtn}
+              style={[styles.emptyBtn, { backgroundColor: colors.buttonPrimary }]}
               onPress={() => router.push('/report')}
               accessible
               accessibilityRole="button"
@@ -330,11 +366,35 @@ export default function HomeScreen() {
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+function StatCard({
+  label,
+  value,
+  color,
+  cardBg,
+  textColor,
+  borderColor,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  cardBg?: string;
+  textColor?: string;
+  borderColor?: string;
+}) {
+  const { isDark } = useAppTheme();
   return (
-    <View style={styles.statCard}>
+    <View style={[styles.statCard, cardBg ? { backgroundColor: cardBg } : null, borderColor ? { borderColor: isDark ? '#334155' : borderColor, borderWidth: 1 } : null, isDark && { overflow: 'hidden' }]}>
+      {isDark && (
+        <LinearGradient
+          colors={['#B0E0E6', '#FFFFFF']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statLabel, textColor ? { color: isDark ? '#17202A' : textColor } : null]}>{label}</Text>
     </View>
   );
 }

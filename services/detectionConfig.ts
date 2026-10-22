@@ -1,11 +1,8 @@
-// Centralized ONNX detection configuration.
-// Change thresholds here — nowhere else in the codebase.
+// Vision AI detection & priority configuration.
+// Centralized municipal civic infrastructure thresholds.
 
 // Minimum confidence to accept a detection (configurable threshold)
 export const DETECTION_THRESHOLD = 0.25; 
-
-// IoU overlap threshold for Non-Maximum Suppression (NMS)
-export const IOU_THRESHOLD = 0.45;
 
 // Road presence validation thresholds
 export const ROAD_VALIDATION_THRESHOLD = 0.45;  // minimum score to consider image a road scene
@@ -26,10 +23,6 @@ export type DetectedIssueType =
   | 'no_major_issue';
 
 export type Priority = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
-
-// YOLO model input dimensions (must match training config)
-export const MODEL_INPUT_WIDTH = 640;
-export const MODEL_INPUT_HEIGHT = 640;
 
 export interface PriorityEvaluation {
   priority: Priority;
@@ -127,7 +120,7 @@ export function calculatePriorityWithExplanation(
         reason: 'High: Severe interconnected alligator cracking indicating structural road base failure',
       };
     }
-    if (area >= 0.03 || desc.includes('spread') || desc.includes('growing')) {
+    if (area >= 0.03 || desc.includes('spread') || desc.includes('growing') || !hasMinorKeywords) {
       return {
         priority: 'MEDIUM',
         reason: 'Medium: Moderate fatigue cracking requiring scheduled surface re-laying',

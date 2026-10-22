@@ -2,10 +2,11 @@ import 'react-native-reanimated';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { LogBox, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LogBox, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AppColors } from '@/constants/colors';
+import { ThemeProvider, useAppTheme } from '@/context/ThemeContext';
 
 // Suppress known upstream React 19 / Expo Router useLinking warning on initial mount
 if (__DEV__) {
@@ -55,10 +56,16 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => voi
   );
 }
 
-export default function RootLayout() {
+function RootNavigation() {
+  const { isDark, colors } = useAppTheme();
   return (
     <>
-      <Stack initialRouteName="index">
+      <Stack
+        initialRouteName="index"
+        screenOptions={{
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="signup" options={{ headerShown: false }} />
@@ -80,8 +87,16 @@ export default function RootLayout() {
         <Stack.Screen name="officer/resolution-screen" options={{ headerShown: false, title: 'Mark Resolved' }} />
         <Stack.Screen name="officer/profile" options={{ headerShown: false, title: 'Officer Profile' }} />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
     </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <RootNavigation />
+    </ThemeProvider>
   );
 }
 

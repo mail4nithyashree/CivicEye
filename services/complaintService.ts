@@ -42,6 +42,8 @@ import {
   formatDisplayIssueName,
 } from './predictionContract';
 import * as Location from 'expo-location';
+import { createNotification } from './notificationService';
+import { checkDescriptionHasNoIssue } from './descriptionClassifier';
 
 export type ComplaintStatus =
   | 'Submitted'
@@ -167,6 +169,9 @@ export interface Complaint {
   // AI Model Prediction Fields
   issueType: string;           // 'alligator cracking' | 'cracking' | 'pothole' | 'no_major_issue'
   confidence: number;          // 0–100 percentage
+  confidenceRaw?: number;      // 0-1 raw probability/score
+  confidenceType?: string;     // Type of confidence assessment
+  predictedClass?: string | null;
   priority: string;            // 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE'
   severity: string;            // Initial severity from AI priority
   estimatedBudget?: number;    // Estimated budget in INR
@@ -278,8 +283,13 @@ export interface Complaint {
   // Citizen Final Verification
   citizenVerification?: CitizenVerificationDetails;
 
-  // Audit History
+  // Audit & Deletion History
   statusHistory?: StatusHistoryItem[];
+  isDeleted?: boolean;
+  deletedAt?: Date;
+  deletedBy?: string;
+  deletedByRole?: 'citizen' | 'officer' | 'authority' | 'admin';
+  deletionReason?: string;
 
   createdAt: Date;
   updatedAt: Date;
@@ -299,12 +309,16 @@ export interface NewComplaintData {
   locationSource?: 'current' | 'map';
   locationAddress?: string;
   issueType: string;
+  displayIssueName?: string;
+  predictedClass?: string | null;
   confidence: number;
+  confidenceRaw?: number;
+  confidenceType?: string;
   priority: string;
   severity: string;
   priorityReason?: string;
   predictionState?: PredictionState;
-  displayIssueName?: string;
+  modelVersion?: string;
   department?: string;
   responsibleDepartment?: string;
   departmentCode?: string;
@@ -465,10 +479,26 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
   const deptCode = data.departmentCode || getDepartmentCode(activeDepartment);
   const defaultIssue = isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : 'pothole';
 
+  const canonicalName = data.displayIssueName
+    ? formatDisplayIssueName(data.displayIssueName)
+    : formatDisplayIssueName(data.issueType || data.detectedIssue || data.AI_prediction || defaultIssue);
+
+  const canonicalPriority = (data.priority || data.severity || 'LOW').toUpperCase();
+
+  const rawConf = typeof data.confidence === 'number'
+    ? data.confidence
+    : (typeof data.AI_confidence === 'number'
+      ? data.AI_confidence
+      : (typeof data.detectionConfidence === 'number' ? data.detectionConfidence : 0));
+  const normalizedConfidence = rawConf > 0 && rawConf <= 1 ? Math.round(rawConf * 100) : Math.round(rawConf);
+  const normalizedConfidenceRaw = typeof data.confidenceRaw === 'number'
+    ? data.confidenceRaw
+    : (normalizedConfidence > 0 ? normalizedConfidence / 100 : 0);
+
   const createdAtDate = parseDate(data.createdAt) || new Date();
   const calculatedDuration = getEstimatedResolutionDuration(
-    data.priority || data.severity || 'LOW',
-    data.issueType || defaultIssue,
+    canonicalPriority,
+    canonicalName,
     activeDepartment,
     createdAtDate
   );
@@ -493,30 +523,34 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
      data.status === 'Rejected' || data.status === 'Dissimilar Image to the Issue' ? 'rejected' :
      data.routingStatus?.startsWith('Moved') ? 'transferred' : 'pending');
 
-  return {
-    id,
-    complaintId: data.complaintId || 'CE0000',
-    citizenId: data.citizenId || '',
-    citizenEmail: data.citizenEmail || data.email || '',
-    imageUri: (data.imageUri || data.imageUrl || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
-    imageUrl: (data.imageUrl || data.imageUri || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
-    description: data.description || '',
-    latitude: typeof data.latitude === 'number' ? data.latitude : (typeof data.lat === 'number' ? data.lat : 0),
-    longitude: typeof data.longitude === 'number' ? data.longitude : (typeof data.long === 'number' ? data.long : 0),
-    region: (data.region || 'Gandhipuram') as CoimbatoreRegion,
-    locationSource: data.locationSource || 'current',
-    locationAddress: data.locationAddress || '',
+    return {
+      id,
+      complaintId: data.complaintId || 'CE0000',
+      citizenId: data.citizenId || '',
+      citizenEmail: data.citizenEmail || data.email || '',
+      imageUri: (data.imageUri || data.imageUrl || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
+      imageUrl: (data.imageUrl || data.imageUri || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
+      description: data.description || '',
+      latitude: typeof data.latitude === 'number' ? data.latitude : (typeof data.lat === 'number' ? data.lat : 0),
+      longitude: typeof data.longitude === 'number' ? data.longitude : (typeof data.long === 'number' ? data.long : 0),
+      region: (data.region || 'Gandhipuram') as CoimbatoreRegion,
+      locationSource: data.locationSource || 'current',
+      locationAddress: data.locationAddress || '',
 
-    issueType: data.issueType || defaultIssue,
-    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
-    priority: data.priority || data.severity || 'LOW',
-    severity: data.severity || data.priority || 'LOW',
-    priorityReason: data.priorityReason,
-    displayIssueName: data.displayIssueName || formatDisplayIssueName(data.issueType || defaultIssue),
-    predictionState: data.predictionState,
-    estimatedBudget: typeof data.estimatedBudget === 'number' ? data.estimatedBudget : data.inspectionDetails?.estimatedBudget,
-    estimatedBudgetDesc: data.estimatedBudgetDesc || data.inspectionDetails?.estimatedBudgetDesc,
-    budgetBreakdown: data.budgetBreakdown || data.inspectionDetails?.budgetBreakdown,
+      issueType: canonicalName,
+      confidence: normalizedConfidence,
+      confidenceRaw: normalizedConfidenceRaw,
+      confidenceType: data.confidenceType || 'vision_assessment',
+      predictedClass: data.predictedClass ?? (data.displayIssueName || data.issueType || canonicalName),
+      priority: canonicalPriority,
+      severity: canonicalPriority,
+      priorityReason: data.priorityReason,
+      displayIssueName: canonicalName,
+      predictionState: data.predictionState,
+      modelVersion: data.modelVersion || 'CivicEye-Vision-Engine-v3',
+      estimatedBudget: typeof data.estimatedBudget === 'number' ? data.estimatedBudget : data.inspectionDetails?.estimatedBudget,
+      estimatedBudgetDesc: data.estimatedBudgetDesc || data.inspectionDetails?.estimatedBudgetDesc,
+      budgetBreakdown: data.budgetBreakdown || data.inspectionDetails?.budgetBreakdown,
 
     department: activeDepartment,
     responsibleDepartment: isNonRoad ? activeDepartment : (data.responsibleDepartment || activeDepartment),
@@ -560,7 +594,6 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     AI_timestamp: parseDate(data.AI_timestamp),
     trainingCandidateStatus: data.trainingCandidateStatus,
     agreementStatus: data.agreementStatus,
-    modelVersion: data.modelVersion,
     originalPrediction: data.originalPrediction,
     originalScore: data.originalScore,
     imageValidationOutcome: data.imageValidationOutcome,
@@ -611,6 +644,12 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
 
     citizenVerification,
     statusHistory,
+
+    isDeleted: !!data.isDeleted,
+    deletedAt: parseDate(data.deletedAt),
+    deletedBy: data.deletedBy,
+    deletedByRole: data.deletedByRole,
+    deletionReason: data.deletionReason,
 
     createdAt: createdAtDate,
     updatedAt: parseDate(data.updatedAt) || new Date(),
@@ -689,6 +728,187 @@ export async function generateMeaningfulComplaintId(customDate: Date = new Date(
 export const generateComplaintId = generateMeaningfulComplaintId;
 
 /**
+ * Dispatch submission confirmation email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendComplaintSubmissionEmail(params: {
+  complaintId: string;
+  issueType: string;
+  description: string;
+  citizenEmail: string;
+  priority?: string;
+  department?: string;
+  status?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'submission',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        description: params.description,
+        citizenEmail: params.citizenEmail,
+        priority: params.priority || 'Standard',
+        department: params.department || 'Road Maintenance',
+        newStatus: params.status || 'Submitted',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Submission email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Submission email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch status update email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendStatusUpdateEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  previousStatus: string;
+  newStatus: string;
+  statusRemarks?: string;
+  department?: string;
+  updatedByName?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'status_update',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        previousStatus: params.previousStatus,
+        newStatus: params.newStatus,
+        statusRemarks: params.statusRemarks,
+        department: params.department || 'Road Maintenance',
+        updatedByName: params.updatedByName || 'Municipal Officer',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Status update email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Status update email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch complaint deletion email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint deletion is never rolled back.
+ */
+export async function sendComplaintDeletionEmail(params: {
+  complaintId: string;
+  issueType?: string;
+  citizenEmail: string;
+  initiatedBy: 'citizen' | 'authority';
+  deletionReason?: string;
+  deletedByName?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'deletion',
+        complaintId: params.complaintId,
+        issueType: params.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: params.citizenEmail,
+        initiatedBy: params.initiatedBy,
+        deletionReason: params.deletionReason,
+        deletedByName: params.deletedByName,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Deletion email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Deletion email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Helper to trigger both in-app notification and email on status change.
+ */
+export async function notifyCitizenStatusChange(params: {
+  complaintId: string;
+  docId: string;
+  citizenId?: string;
+  citizenEmail?: string;
+  issueType: string;
+  previousStatus: string;
+  newStatus: string;
+  remarks?: string;
+  department?: string;
+  updatedByName?: string;
+}): Promise<void> {
+  // 1. In-app notification
+  if (params.citizenId) {
+    try {
+      await createNotification({
+        userId: params.citizenId,
+        recipientId: params.citizenId,
+        recipientRole: 'citizen',
+        complaintId: params.docId,
+        title: `Complaint Status: ${params.newStatus}`,
+        message: `Your complaint ${params.complaintId} (${params.issueType}) is now "${params.newStatus}". ${params.remarks ? `Remarks: ${params.remarks}` : ''}`,
+        type: params.newStatus === 'Resolved' ? 'work_resolved' : params.newStatus === 'Verified' ? 'field_verified' : 'work_in_progress',
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] In-app notification error (handled safely):', notifErr);
+    }
+  }
+
+  // 2. Email notification
+  if (params.citizenEmail) {
+    sendStatusUpdateEmail({
+      complaintId: params.complaintId,
+      issueType: params.issueType,
+      citizenEmail: params.citizenEmail,
+      previousStatus: params.previousStatus,
+      newStatus: params.newStatus,
+      statusRemarks: params.remarks,
+      department: params.department,
+      updatedByName: params.updatedByName,
+    }).catch(err => {
+      console.warn('[complaintService] Status update email error (handled safely):', err);
+    });
+  }
+}
+
+/**
  * Dispatch email notification to citizen via backend endpoint.
  * Handles failure gracefully so complaint storage is never blocked.
  */
@@ -700,40 +920,13 @@ export async function sendSWMNotificationEmail(params: {
   department?: string;
   routingStatus?: string;
 }): Promise<boolean> {
-  if (!params.citizenEmail) {
-    console.warn('[complaintService] No citizen email provided for SWM notification.');
-    return false;
-  }
-
-  try {
-    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        complaintId: params.complaintId,
-        issueType: params.issueType,
-        description: params.description,
-        citizenEmail: params.citizenEmail,
-        department: params.department || 'Solid Waste Management',
-        routingStatus: params.routingStatus || 'Moved to Solid Waste Management',
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json().catch(() => ({}));
-      console.log('[complaintService] SWM notification email triggered successfully:', data);
-      return true;
-    } else {
-      console.warn('[complaintService] Server returned non-ok status for email notification:', response.status);
-      return false;
-    }
-  } catch (error) {
-    console.warn('[complaintService] Email endpoint error (handled gracefully):', error);
-    return false;
-  }
+  return sendComplaintSubmissionEmail({
+    complaintId: params.complaintId,
+    issueType: params.issueType,
+    description: params.description,
+    citizenEmail: params.citizenEmail,
+    department: params.department || 'Solid Waste Management',
+  });
 }
 
 // Backward-compatibility alias
@@ -833,9 +1026,24 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     }
   }
 
+  // Pre-persistence validation gate: Block invalid submissions before generating complaint ID or creating records
+  const noIssueCheck = checkDescriptionHasNoIssue(data.description || '');
+  if (noIssueCheck.isNoIssue) {
+    throw new Error('Validation Failed: Your description does not report a civic problem. Please provide a description of the actual issue and upload a relevant image.');
+  }
+
+  if (data.predictionState === 'INVALID_IMAGE' || data.status === 'Dissimilar Image to the Issue') {
+    throw new Error('Validation Failed: Invalid Issue Image. The uploaded image does not match the reported civic issue. Please upload a relevant image and try again.');
+  }
+
+  if ((data.predictionState === 'NO_MAJOR_ISSUE' || data.issueType === 'no_major_issue') && data.issueType !== 'Road Surface (Inspection Requested)') {
+    throw new Error('Validation Failed: No Issue Found. The uploaded image does not show a clearly identifiable civic issue. Please upload an image showing the problem you want to report.');
+  }
+
   const complaintId = data.complaintId || await generateMeaningfulComplaintId();
-  const isDissimilar = data.status === 'Dissimilar Image to the Issue' || data.analysisStatus === 'dissimilar_image' || (data.roadValidationResult === 'not_road' && data.rejectionType === 'IMAGE_MISMATCH');
-  const isNoMajorIssue = data.analysisStatus === 'no_major_issue' || data.issueType === 'no_major_issue' || data.issueType === 'No supported issue detected' || data.issueType === 'Road Surface (Inspection Requested)';
+  const isDissimilar = (data.status as string) === 'Dissimilar Image to the Issue' || data.analysisStatus === 'dissimilar_image' || (data.roadValidationResult === 'not_road' && (data as any).rejectionType === 'IMAGE_MISMATCH') || (data.predictionState as string) === 'INVALID_IMAGE';
+  const isCleanRoadRequested = data.issueType === 'Road Surface (Inspection Requested)' || data.displayIssueName === 'Road Surface (Inspection Requested)';
+  const isNoMajorIssue = data.analysisStatus === 'no_major_issue' || data.issueType === 'no_major_issue' || data.predictionState === 'NO_MAJOR_ISSUE' || data.displayIssueName === 'Clean Road (No Major Issue)' || data.displayIssueName === 'No Major Issue';
   const activeDept = data.department || data.responsibleDepartment || 'Road Maintenance';
   const isRoad = isRoadDepartment({
     department: activeDept,
@@ -866,39 +1074,76 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     timestamp: new Date().toISOString(),
   };
 
-  const defaultIssue = isDissimilar
-    ? (data.issueType || 'Dissimilar Image to the Issue')
-    : isNoMajorIssue
-    ? (data.issueType || 'No supported issue detected')
-    : (isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : (data.issueType || 'pothole'));
+  // Preserve the exact canonical display issue reviewed by citizen on Issue Summary
+  const canonicalDisplayIssue = isDissimilar
+    ? 'Invalid Issue Image'
+    : isCleanRoadRequested
+    ? 'Road Surface (Inspection Requested)'
+    : (data.displayIssueName
+      ? formatDisplayIssueName(data.displayIssueName)
+      : (data.issueType
+        ? formatDisplayIssueName(data.issueType)
+        : (isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : 'Pothole')));
 
-  const contract = data.predictionContract;
-  const rawPriority = isDissimilar || isNoMajorIssue ? 'NONE' : (data.priority || 'LOW');
+  const canonicalConfidence = isDissimilar
+    ? (typeof data.confidence === 'number' && data.confidence > 0 ? (data.confidence <= 1 ? Math.round(data.confidence * 100) : Math.round(data.confidence)) : 0)
+    : (typeof data.confidence === 'number'
+      ? (data.confidence > 0 && data.confidence <= 1 ? Math.round(data.confidence * 100) : Math.round(data.confidence))
+      : 0);
+
+  const canonicalConfidenceRaw = typeof data.confidenceRaw === 'number'
+    ? data.confidenceRaw
+    : (data.predictionContract?.confidenceRaw ?? (canonicalConfidence > 0 ? canonicalConfidence / 100 : 0));
+
+  const canonicalConfidenceType = data.confidenceType || data.predictionContract?.confidenceType || 'model_calibrated_probability';
+
+  const canonicalPriority = (isDissimilar || isCleanRoadRequested || isNoMajorIssue || data.priority === 'NONE')
+    ? 'NONE'
+    : ((data.priority || data.severity || 'MEDIUM').toUpperCase());
+
+  const canonicalPriorityReason = isDissimilar
+    ? 'None: Invalid or unrelated image.'
+    : (isCleanRoadRequested || isNoMajorIssue)
+    ? 'Normal clean road surface verified. No major road defects detected.'
+    : (data.priorityReason || data.predictionContract?.priorityReason || `${canonicalPriority} priority assessed for ${canonicalDisplayIssue}.`);
+
+  const canonicalPredictionState: PredictionState = isDissimilar
+    ? 'INVALID_IMAGE'
+    : (isCleanRoadRequested || isNoMajorIssue)
+    ? 'NO_MAJOR_ISSUE'
+    : (data.predictionState || data.predictionContract?.predictionState || 'VALID_ISSUE');
+
+  const canonicalPredictedClass = (isDissimilar || isCleanRoadRequested || isNoMajorIssue)
+    ? null
+    : (data.predictedClass ?? data.predictionContract?.predictedClass ?? canonicalDisplayIssue);
+
+  const canonicalModelVersion = data.modelVersion || data.predictionContract?.modelVersion || 'CivicEye-Vision-Engine-v3';
 
   const complaintDocData: Record<string, any> = {
     complaintId,
     clientSubmissionId: data.clientSubmissionId || null,
 
     // Typed AI Prediction Contract Fields
-    predictedClass: contract?.predictedClass ?? (isDissimilar ? null : isNoMajorIssue ? null : (data.detectedIssue || data.issueType || null)),
-    displayIssueName: contract?.displayIssueName ?? data.displayIssueName ?? formatDisplayIssueName(defaultIssue),
-    predictionState: contract?.predictionState ?? data.predictionState ?? (isDissimilar ? 'INVALID_IMAGE' : isNoMajorIssue ? 'NO_MAJOR_ISSUE' : 'VALID_ISSUE'),
-    priorityReason: contract?.priorityReason ?? data.priorityReason ?? (isDissimilar || isNoMajorIssue ? 'None: Invalid or clean image.' : `Assessed for ${contract?.displayIssueName || data.displayIssueName || defaultIssue}`),
-    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
-    confidenceRaw: contract?.confidenceRaw ?? ((typeof data.confidence === 'number' ? data.confidence : 0) / 100),
-    validationStatus: contract?.validationStatus ?? (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
-    predictionStatus: contract?.predictionStatus ?? (isDissimilar ? 'rejected' : 'success'),
-    predictionError: contract?.predictionError ?? null,
-    boundingBoxes: contract?.boundingBoxes ?? [],
+    predictedClass: canonicalPredictedClass,
+    displayIssueName: canonicalDisplayIssue,
+    predictionState: canonicalPredictionState,
+    priorityReason: canonicalPriorityReason,
+    confidence: canonicalConfidence,
+    confidenceRaw: canonicalConfidenceRaw,
+    confidenceType: canonicalConfidenceType,
+    validationStatus: data.predictionContract?.validationStatus ?? (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    predictionStatus: data.predictionContract?.predictionStatus ?? (isDissimilar ? 'rejected' : 'success'),
+    predictionError: data.predictionContract?.predictionError ?? null,
+    boundingBoxes: data.predictionContract?.boundingBoxes ?? [],
     issueCategory: activeDept,
 
     // Feedback & Continuous Learning Candidate Provenance
     trainingCandidateStatus: 'unverified_candidate',
-    modelVersion: contract?.modelVersion || 'yolov8-road-v1',
-    originalPrediction: contract?.predictedClass || data.detectedIssue || data.issueType || null,
-    originalScore: typeof data.confidence === 'number' ? data.confidence : 0,
-    imageValidationOutcome: contract?.validationStatus || (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
-    agreementStatus: contract?.agreementStatus || 'AGREED',
+    modelVersion: canonicalModelVersion,
+    originalPrediction: canonicalPredictedClass,
+    originalScore: canonicalConfidence,
+    imageValidationOutcome: data.predictionContract?.validationStatus || (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    agreementStatus: data.predictionContract?.agreementStatus || 'AGREED',
     feedbackTimestamp: serverTimestamp(),
 
     citizenId: data.citizenId,
@@ -914,9 +1159,9 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     region: data.region || 'Gandhipuram',
     locationSource: data.locationSource ?? 'current',
     locationAddress: data.locationAddress ?? '',
-    issueType: defaultIssue,
-    priority: rawPriority,
-    severity: isDissimilar || isNoMajorIssue ? 'NONE' : (data.severity || rawPriority),
+    issueType: canonicalDisplayIssue,
+    priority: canonicalPriority,
+    severity: canonicalPriority,
     department: activeDept,
     responsibleDepartment: isNonRoad ? activeDept : (data.responsibleDepartment || activeDept),
     departmentCode: deptCode,
@@ -929,12 +1174,12 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     roadValidationResult: data.roadValidationResult ?? (isDissimilar ? 'not_road' : (isNonRoad ? 'not_road' : 'road')),
     roadValidationConfidence: data.roadValidationConfidence ?? (isDissimilar ? 0 : 1.0),
     analysisStatus: data.analysisStatus ?? (isDissimilar ? 'dissimilar_image' : (isNonRoad ? 'not_road' : 'damage_detected')),
-    AI_prediction: isDissimilar ? 'Dissimilar Image to the Issue' : (data.detectedIssue || data.issueType || defaultIssue),
-    AI_confidence: data.detectionConfidence ?? data.confidence,
+    AI_prediction: canonicalDisplayIssue,
+    AI_confidence: canonicalConfidence,
     AI_validation: data.roadValidationResult || (isDissimilar ? 'not_road' : (isNonRoad ? 'not_road' : 'road')),
     AI_timestamp: serverTimestamp(),
-    ...(data.detectedIssue ? { detectedIssue: data.detectedIssue } : {}),
-    ...(typeof data.detectionConfidence === 'number' ? { detectionConfidence: data.detectionConfidence } : {}),
+    detectedIssue: canonicalDisplayIssue,
+    detectionConfidence: canonicalConfidence,
     ...(data.suggestedRoadName ? { roadName: data.suggestedRoadName } : {}),
     ...(data.suggestedAuthority ? { maintenanceAuthority: data.suggestedAuthority } : {}),
     ...(typeof data.estimatedBudget === 'number' ? { estimatedBudget: data.estimatedBudget } : {}),
@@ -943,17 +1188,17 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     // Resolution duration calculation
     estimatedResolutionDays: (() => {
       if (isDissimilar) return 0;
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return typeof data.estimatedResolutionDays === 'number' ? data.estimatedResolutionDays : dur.durationDays;
     })(),
     estimatedResolutionDuration: (() => {
       if (isDissimilar) return 'Inactive';
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return data.estimatedResolutionDuration || dur.durationText;
     })(),
     expectedResolutionDate: (() => {
       if (isDissimilar) return null;
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return data.expectedResolutionDate || dur.expectedResolutionDate;
     })(),
     assignedOfficer: isDissimilar ? null : (data.assignedOfficerName || data.assignedOfficer || data.officerName || null),
@@ -976,17 +1221,18 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
   const ref = await addDoc(collection(db, 'complaints'), complaintDocData);
   console.log('[FIRESTORE] Complaint saved with ID:', ref.id);
 
-  // If routed to Solid Waste Management and not rejected, send email notification to citizen
-  if (!isDissimilar && (deptCode === 'SWM' || activeDept === 'Solid Waste Management')) {
-    sendSWMNotificationEmail({
+  // Send submission confirmation email to authenticated citizen account
+  if (!isDissimilar && data.citizenEmail) {
+    sendComplaintSubmissionEmail({
       complaintId,
-      issueType: data.issueType || defaultIssue,
+      issueType: canonicalDisplayIssue,
       description: data.description,
       citizenEmail: data.citizenEmail,
+      priority: canonicalPriority,
       department: activeDept,
-      routingStatus,
+      status: initialStatus,
     }).catch(err => {
-      console.warn('[complaintService] SWM Email notification dispatch error:', err);
+      console.warn('[complaintService] Submission email dispatch error:', err);
     });
   }
 
@@ -1074,6 +1320,20 @@ export async function verifyComplaintWorkflow(
       }
 
       await updateDoc(docRef, updatePayload);
+
+      // Notify citizen of verified status
+      notifyCitizenStatusChange({
+        complaintId: currentData.complaintId || complaintId,
+        docId: complaintId,
+        citizenId: currentData.citizenId,
+        citizenEmail: currentData.citizenEmail,
+        issueType: verifiedIssue,
+        previousStatus: currentData.status || 'Submitted',
+        newStatus: 'Verified',
+        remarks: params.remarks || 'Existing department confirmed by field verification.',
+        department: currentDept,
+        updatedByName: params.inspectorName,
+      });
     } else if (params.action === 'transfer_department') {
       const newDeptName = params.newDepartmentName || 'Solid Waste Management';
       const newDeptCode = params.newDepartmentCode || getDepartmentCode(newDeptName);
@@ -1129,19 +1389,19 @@ export async function verifyComplaintWorkflow(
 
       await updateDoc(docRef, updatePayload);
 
-      // If transferred to SWM, send email notification to citizen
-      if (newDeptCode === 'SWM' && currentData.citizenEmail) {
-        sendSWMNotificationEmail({
-          complaintId: currentData.complaintId || complaintId,
-          issueType: newIssueType,
-          description: currentData.description || '',
-          citizenEmail: currentData.citizenEmail,
-          department: newDeptName,
-          routingStatus,
-        }).catch(err => {
-          console.warn('[complaintService] SWM Email error on department transfer:', err);
-        });
-      }
+      // Notify citizen of department transfer
+      notifyCitizenStatusChange({
+        complaintId: currentData.complaintId || complaintId,
+        docId: complaintId,
+        citizenId: currentData.citizenId,
+        citizenEmail: currentData.citizenEmail,
+        issueType: newIssueType,
+        previousStatus: currentData.status || 'Submitted',
+        newStatus: 'Under Review',
+        remarks: `Transferred to ${newDeptName}. Reason: ${params.remarks || 'Another department involved.'}`,
+        department: newDeptName,
+        updatedByName: params.inspectorName,
+      });
     }
   } catch (clientErr: any) {
     console.log('[complaintService] Direct Firestore verify workflow failed, using backend proxy /api/verify-workflow...', clientErr?.message || clientErr);
@@ -1284,6 +1544,19 @@ export async function submitFieldVerification(
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
     });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: verification.verifiedIssue,
+      previousStatus: snap.exists() ? snap.data().status : 'Submitted',
+      newStatus: 'In Progress',
+      remarks: verification.inspectorRemarks || 'Field inspection approved; maintenance work in progress.',
+      department: verification.departmentName,
+      updatedByName: verification.inspectorName,
+    });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing verification update via backend verification service...');
     try {
@@ -1355,6 +1628,19 @@ export async function rejectComplaintByInspector(
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
     });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+      previousStatus: snap.exists() ? snap.data().status : 'Pending Field Verification',
+      newStatus: 'Rejected',
+      remarks: rejectionReason,
+      department: snap.exists() ? snap.data().department : 'Road Maintenance',
+      updatedByName: inspectorName,
+    });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing rejection update via backend service...');
     try {
@@ -1424,6 +1710,19 @@ export async function markComplaintAsValid(
       inspectedAt: serverTimestamp(),
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
+    });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+      previousStatus: snap.exists() ? snap.data().status : 'Pending Field Verification',
+      newStatus: 'Verified',
+      remarks: inspectorRemarks,
+      department: snap.exists() ? snap.data().department : 'Road Maintenance',
+      updatedByName: inspectorName,
     });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing mark valid via backend service...');
@@ -1500,6 +1799,19 @@ export async function assignToAuthority(
     officerRemarks: assignment.adminRemarks || '',
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
+  });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'Verified',
+    newStatus: 'Assigned',
+    remarks: assignment.adminRemarks || `Assigned to ${assignment.assignedAuthority}`,
+    department: assignment.assignedAuthority,
+    updatedByName: assignment.adminName,
   });
 }
 
@@ -1590,6 +1902,19 @@ export async function updateAuthorityProgress(
   }
 
   await updateDoc(docRef, updatePayload);
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'Assigned',
+    newStatus,
+    remarks: progressRemarks,
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: officerName,
+  });
 }
 
 /**
@@ -1679,6 +2004,19 @@ export async function markComplaintResolved(
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
   });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'In Progress',
+    newStatus: 'Resolved',
+    remarks: resolution.resolutionRemarks,
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: resolution.resolvedByName,
+  });
 }
 
 export async function markAsResolved(
@@ -1736,6 +2074,19 @@ export async function submitCitizenVerification(
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
   });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId,
+    citizenEmail,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: 'Resolved',
+    newStatus: targetStatus,
+    remarks: feedbackRemarks || (confirmedResolved ? 'Citizen verified and closed' : 'Citizen reported not resolved'),
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: citizenEmail.split('@')[0] || 'Citizen',
+  });
 }
 
 export function subscribeToUserComplaints(
@@ -1753,7 +2104,7 @@ export function subscribeToUserComplaints(
     snapshot => {
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
-        .filter(c => !isInvalidImageComplaint(c))
+        .filter(c => !isInvalidImageComplaint(c) && !c.isDeleted)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       onData(complaints);
     },
@@ -1774,8 +2125,8 @@ export function subscribeToAssignedComplaints(
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
         .filter(c => {
-          // Exclude rejected image mismatch complaints from active inspector queues
-          if (isInvalidImageComplaint(c)) {
+          // Exclude deleted or rejected image mismatch complaints from active inspector queues
+          if (c.isDeleted || isInvalidImageComplaint(c)) {
             return false;
           }
 
@@ -1810,6 +2161,7 @@ export function subscribeToAllComplaints(
     snapshot => {
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
+        .filter(c => !c.isDeleted)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       onData(complaints);
     },
@@ -1829,7 +2181,12 @@ export function subscribeToComplaint(
         onData(null);
         return;
       }
-      onData(parseComplaintDoc(snap));
+      const parsed = parseComplaintDoc(snap);
+      if (parsed.isDeleted) {
+        onData(null);
+        return;
+      }
+      onData(parsed);
     },
     err => onError(err as Error)
   );
@@ -1842,9 +2199,11 @@ export async function getUserComplaintStats(citizenId: string) {
   let resolved = 0;
   let rejected = 0;
   snapshot.forEach(d => {
-    const status = d.data().status as ComplaintStatus;
+    const data = d.data();
+    if (data.isDeleted) return;
+    const status = data.status as ComplaintStatus;
     if (status === 'Closed' || status === 'Resolved') resolved++;
-    else if (isInvalidImageComplaint(d.data())) rejected++;
+    else if (isInvalidImageComplaint(data)) rejected++;
     else active++;
   });
   return { total: snapshot.size, active, resolved, rejected };
@@ -1862,6 +2221,7 @@ export async function getOfficerStats() {
 
   complaintsSnapshot.forEach(d => {
     const data = d.data();
+    if (data.isDeleted) return;
     const status = data.status as ComplaintStatus;
     const inspStatus = data.inspectionStatus as InspectionStatus;
     total++;
@@ -1881,6 +2241,209 @@ export async function getOfficerStats() {
   });
 
   return { total, newComplaints, pendingInspection, validComplaints, rejectedComplaints, inProgress, resolved };
+}
+
+/**
+ * Citizen-side complaint deletion (owner-enforced)
+ */
+export async function deleteComplaintByCitizen(
+  complaintId: string,
+  citizenId: string
+): Promise<void> {
+  // First attempt backend proxy for authenticated backend proxy flow
+  try {
+    const apiBase = getApiBaseUrl();
+    const res = await fetch(`${apiBase}/api/citizen-delete-complaint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ complaintId, citizenId }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      console.log('✅ [complaintService] Citizen deletion via server proxy successful:', json);
+      return;
+    }
+  } catch (proxyErr) {
+    console.warn('[complaintService] Backend proxy citizen deletion unavailable, falling back to direct Firestore:', proxyErr);
+  }
+
+  // Fallback direct Firestore update
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const data = snap.data();
+  if (data.citizenId !== citizenId) {
+    throw new Error('Unauthorized: You can only delete complaints that you submitted.');
+  }
+
+  const existingHistory = Array.isArray(data.statusHistory) ? data.statusHistory : [];
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: data.status || 'Submitted',
+    newStatus: 'Deleted by Citizen',
+    updatedBy: citizenId,
+    updatedByName: data.citizenEmail?.split('@')[0] || 'Citizen',
+    remarks: 'Complaint deleted by citizen from active views.',
+    timestamp: new Date().toISOString(),
+  };
+
+  await updateDoc(docRef, {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: citizenId,
+    deletedByRole: 'citizen',
+    status: 'Closed',
+    statusHistory: [...existingHistory, historyItem],
+    updatedAt: serverTimestamp(),
+  });
+
+  // Atomically create citizen notification for self-deletion
+  const citizenUid = data.citizenId;
+  const canonicalIssue = data.displayIssueName || data.issueType || 'Civic Defect';
+  const displayId = data.complaintId || complaintId;
+  const notifDateStr = new Date().toLocaleString('en-IN');
+  if (citizenUid) {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        userId: citizenUid,
+        recipientId: citizenUid,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Deleted',
+        message: `Your complaint ${displayId} (${canonicalIssue}) was deleted on ${notifDateStr} and removed from active records.`,
+        type: 'complaint_deleted',
+        deletionReason: 'Deleted by citizen from active records',
+        deletedBy: 'You (Citizen)',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Citizen deletion in-app notif note:', notifErr);
+    }
+  }
+
+  // Deletion email notification
+  if (data.citizenEmail) {
+    sendComplaintDeletionEmail({
+      complaintId: displayId,
+      issueType: canonicalIssue,
+      citizenEmail: data.citizenEmail,
+      initiatedBy: 'citizen',
+      deletionReason: 'Deleted by citizen request',
+    }).catch(err => console.warn('[complaintService] Citizen deletion email error (safely handled):', err));
+  }
+}
+
+/**
+ * Authority/Officer-side complaint deletion (reason-enforced + citizen notification)
+ */
+export async function deleteComplaintByAuthority(
+  complaintId: string,
+  officerId: string,
+  officerName: string,
+  officerRole: string,
+  deletionReason: string
+): Promise<void> {
+  const reason = (deletionReason || '').trim();
+  if (!reason) {
+    throw new Error('A non-empty deletion reason or clarification is strictly required to delete this complaint.');
+  }
+
+  // First attempt backend proxy for atomic server execution
+  try {
+    const apiBase = getApiBaseUrl();
+    const res = await fetch(`${apiBase}/api/authority-delete-complaint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        complaintId,
+        officerId,
+        officerName,
+        officerRole,
+        deletionReason: reason,
+      }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      console.log('✅ [complaintService] Authority deletion via server proxy successful:', json);
+      return;
+    }
+  } catch (proxyErr) {
+    console.warn('[complaintService] Backend proxy authority deletion unavailable, falling back to direct Firestore:', proxyErr);
+  }
+
+  // Fallback direct Firestore update
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const data = snap.data();
+
+  const existingHistory = Array.isArray(data.statusHistory) ? data.statusHistory : [];
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: data.status || 'Submitted',
+    newStatus: 'Deleted by Authority',
+    updatedBy: officerId,
+    updatedByName: officerName || 'Authorized Officer',
+    remarks: `Complaint removed by authority. Reason: ${reason}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  await updateDoc(docRef, {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: officerId,
+    deletedByRole: 'officer',
+    deletionReason: reason,
+    status: 'Closed',
+    statusHistory: [...existingHistory, historyItem],
+    updatedAt: serverTimestamp(),
+  });
+
+  // Atomically create citizen notification
+  const citizenUid = data.citizenId;
+  const canonicalIssue = data.displayIssueName || data.issueType || 'Civic Defect';
+  const displayId = data.complaintId || complaintId;
+  const notifDateStr = new Date().toLocaleString('en-IN');
+  const notifMessage = `Your complaint ${displayId} — ${canonicalIssue} — was removed by the responsible authority. Reason: ${reason}. Date: ${notifDateStr}.`;
+
+  if (citizenUid) {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        userId: citizenUid,
+        recipientId: citizenUid,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Removed by Authority',
+        message: notifMessage,
+        type: 'complaint_deleted',
+        deletionReason: reason,
+        deletedBy: officerName || 'Authorized Officer',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Failed to create in-app notification directly:', notifErr);
+    }
+  }
+
+  // Deletion email notification
+  if (data.citizenEmail) {
+    sendComplaintDeletionEmail({
+      complaintId: displayId,
+      issueType: canonicalIssue,
+      citizenEmail: data.citizenEmail,
+      initiatedBy: 'authority',
+      deletionReason: reason,
+      deletedByName: officerName || 'Authorized Officer',
+    }).catch(err => console.warn('[complaintService] Authority deletion email error (safely handled):', err));
+  }
 }
 
 export async function updateComplaintStatus(docId: string, status: ComplaintStatus) {

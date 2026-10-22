@@ -1,4 +1,6 @@
 import ComplaintCard from '@/components/ComplaintCard';
+import ThemeToggle from '@/components/ThemeToggle';
+import { useAppTheme } from '@/context/ThemeContext';
 import { ALL_COIMBATORE_REGIONS, type CoimbatoreRegion } from '@/constants/coimbatoreRoads';
 import { AppColors } from '@/constants/colors';
 import { auth } from '@/firebaseConfig';
@@ -54,6 +56,7 @@ const AUTHORITY_OPTIONS = [
 export default function MainOfficerDashboard() {
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
+  const { colors, isDark } = useAppTheme();
 
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [officer, setOfficer] = useState<Officer | null>(null);
@@ -466,30 +469,31 @@ export default function MainOfficerDashboard() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Top Bar */}
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.brandGroup}>
-          <View style={styles.brandIcon}>
+          <View style={[styles.brandIcon, isDark && { backgroundColor: colors.buttonPrimary }]}>
             <Ionicons name="shield-checkmark" size={20} color={AppColors.white} />
           </View>
           <View>
-            <Text style={styles.portalTitle}>CivicEye Coimbatore</Text>
-            <Text style={styles.officerName}>
+            <Text style={[styles.portalTitle, { color: colors.textOnDark }]}>CivicEye Coimbatore</Text>
+            <Text style={[styles.officerName, { color: colors.textOnDarkSecondary }]}>
               {officer?.name} • {officer?.role === 'main_officer' ? 'Administrator' : 'Field Inspector'}
             </Text>
           </View>
         </View>
 
         <View style={styles.topActions}>
+          <ThemeToggle style={{ marginRight: 6 }} />
           <TouchableOpacity
-            style={styles.profileBtn}
+            style={[styles.profileBtn, { backgroundColor: isDark ? colors.surface : '#EFF6FF', borderColor: colors.border, borderWidth: isDark ? 1 : 0 }]}
             onPress={() => router.push('/officer/profile')}
             accessible
             accessibilityRole="button"
             accessibilityLabel="Officer Profile"
           >
-            <Ionicons name="person-circle-outline" size={26} color={AppColors.primary} />
+            <Ionicons name="person-circle-outline" size={26} color={isDark ? '#1F6170' : colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.logoutBtn}
@@ -506,60 +510,61 @@ export default function MainOfficerDashboard() {
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={AppColors.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
         {/* Banner: Coimbatore 4-Region Scope */}
-        <View style={styles.scopeBanner}>
-          <Ionicons name="map" size={18} color="#1D4ED8" />
-          <Text style={styles.scopeBannerText}>
+        <View style={[styles.scopeBanner, isDark && { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Ionicons name="map" size={18} color={isDark ? '#1F6170' : '#1D4ED8'} />
+          <Text style={[styles.scopeBannerText, isDark && { color: colors.textPrimary }]}>
             Target Coverage: Maniyakarampalayam • Ganapathy • Gandhipuram • Peelamedu
           </Text>
         </View>
 
         {/* Analytics Grid */}
         <View style={styles.analyticsGrid}>
-          <View style={[styles.statBox, { borderLeftColor: AppColors.primary }]}>
-            <Text style={styles.statNum}>{analytics.total}</Text>
-            <Text style={styles.statLabel}>Total Raised</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.primary }]}>
+            <Text style={[styles.statNum, { color: colors.textPrimary }]}>{analytics.total}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total Raised</Text>
           </View>
-          <View style={[styles.statBox, { borderLeftColor: '#B45309' }]}>
-            <Text style={[styles.statNum, { color: '#B45309' }]}>{analytics.pendingVerification}</Text>
-            <Text style={styles.statLabel}>Pending Insp.</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: '#B45309' }]}>
+            <Text style={[styles.statNum, { color: '#92400E' }]}>{analytics.pendingVerification}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Pending Insp.</Text>
           </View>
-          <View style={[styles.statBox, { borderLeftColor: '#0D9488' }]}>
-            <Text style={[styles.statNum, { color: '#0D9488' }]}>{analytics.verified}</Text>
-            <Text style={styles.statLabel}>Verified (Ready)</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: '#0D9488' }]}>
+            <Text style={[styles.statNum, { color: '#0F766E' }]}>{analytics.verified}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Verified (Ready)</Text>
           </View>
-          <View style={[styles.statBox, { borderLeftColor: '#4F46E5' }]}>
-            <Text style={[styles.statNum, { color: '#4F46E5' }]}>{analytics.assigned}</Text>
-            <Text style={styles.statLabel}>Assigned</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: '#4F46E5' }]}>
+            <Text style={[styles.statNum, { color: isDark ? '#1F6170' : '#4F46E5' }]}>{analytics.assigned}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Assigned</Text>
           </View>
-          <View style={[styles.statBox, { borderLeftColor: '#D97706' }]}>
-            <Text style={[styles.statNum, { color: '#D97706' }]}>{analytics.inProgress}</Text>
-            <Text style={styles.statLabel}>In Progress</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: '#D97706' }]}>
+            <Text style={[styles.statNum, { color: '#B45309' }]}>{analytics.inProgress}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>In Progress</Text>
           </View>
-          <View style={[styles.statBox, { borderLeftColor: AppColors.success }]}>
-            <Text style={[styles.statNum, { color: AppColors.success }]}>{analytics.resolved + analytics.closed}</Text>
-            <Text style={styles.statLabel}>Resolved / Closed</Text>
+          <View style={[styles.statBox, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: AppColors.success }]}>
+            <Text style={[styles.statNum, { color: '#047857' }]}>{analytics.resolved + analytics.closed}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Resolved / Closed</Text>
           </View>
         </View>
 
         {/* Region Breakdown Cards */}
-        <Text style={styles.sectionHeader}>Coimbatore 4-Region Breakdown</Text>
+        <Text style={[styles.sectionHeader, { color: colors.textOnDark }]}>Coimbatore 4-Region Breakdown</Text>
         <View style={styles.regionBreakdownRow}>
           {ALL_COIMBATORE_REGIONS.map(reg => (
             <TouchableOpacity
               key={reg}
               style={[
                 styles.regionStatCard,
-                regionFilter === reg && styles.regionStatCardActive,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                regionFilter === reg && [styles.regionStatCardActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
               ]}
               onPress={() => setRegionFilter(regionFilter === reg ? 'all' : reg)}
             >
-              <Text style={[styles.regionStatNum, regionFilter === reg && styles.regionStatTextActive]}>
+              <Text style={[styles.regionStatNum, { color: colors.textPrimary }, regionFilter === reg && styles.regionStatTextActive]}>
                 {analytics.regionCounts[reg]}
               </Text>
-              <Text style={[styles.regionStatName, regionFilter === reg && styles.regionStatTextActive]} numberOfLines={1}>
+              <Text style={[styles.regionStatName, { color: colors.textSecondary }, regionFilter === reg && styles.regionStatTextActive]} numberOfLines={1}>
                 {reg}
               </Text>
             </TouchableOpacity>
@@ -567,44 +572,62 @@ export default function MainOfficerDashboard() {
         </View>
 
         {/* Issue Type Breakdown Cards */}
-        <Text style={styles.sectionHeader}>Issue Type Distribution</Text>
+        <Text style={[styles.sectionHeader, { color: colors.textOnDark }]}>Issue Type Distribution</Text>
         <View style={styles.issueBreakdownRow}>
           <TouchableOpacity
-            style={[styles.issueStatCard, issueFilter === 'pothole' && styles.issueStatCardActive]}
+            style={[
+              styles.issueStatCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              issueFilter === 'pothole' && [styles.issueStatCardActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setIssueFilter(issueFilter === 'pothole' ? 'all' : 'pothole')}
           >
-            <Text style={styles.issueStatNum}>{analytics.issueCounts['pothole']}</Text>
-            <Text style={styles.issueStatName}>Potholes</Text>
+            <Text style={[styles.issueStatNum, { color: colors.textPrimary }, issueFilter === 'pothole' && { color: '#FFFFFF' }]}>
+              {analytics.issueCounts['pothole']}
+            </Text>
+            <Text style={[styles.issueStatName, { color: colors.textSecondary }, issueFilter === 'pothole' && { color: '#FFFFFF' }]}>Potholes</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.issueStatCard, issueFilter === 'cracking' && styles.issueStatCardActive]}
+            style={[
+              styles.issueStatCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              issueFilter === 'cracking' && [styles.issueStatCardActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setIssueFilter(issueFilter === 'cracking' ? 'all' : 'cracking')}
           >
-            <Text style={styles.issueStatNum}>{analytics.issueCounts['cracking']}</Text>
-            <Text style={styles.issueStatName}>Cracking</Text>
+            <Text style={[styles.issueStatNum, { color: colors.textPrimary }, issueFilter === 'cracking' && { color: '#FFFFFF' }]}>
+              {analytics.issueCounts['cracking']}
+            </Text>
+            <Text style={[styles.issueStatName, { color: colors.textSecondary }, issueFilter === 'cracking' && { color: '#FFFFFF' }]}>Cracking</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.issueStatCard, issueFilter === 'alligator cracking' && styles.issueStatCardActive]}
+            style={[
+              styles.issueStatCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              issueFilter === 'alligator cracking' && [styles.issueStatCardActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setIssueFilter(issueFilter === 'alligator cracking' ? 'all' : 'alligator cracking')}
           >
-            <Text style={styles.issueStatNum}>{analytics.issueCounts['alligator cracking']}</Text>
-            <Text style={styles.issueStatName}>Alligator Crack</Text>
+            <Text style={[styles.issueStatNum, { color: colors.textPrimary }, issueFilter === 'alligator cracking' && { color: '#FFFFFF' }]}>
+              {analytics.issueCounts['alligator cracking']}
+            </Text>
+            <Text style={[styles.issueStatName, { color: colors.textSecondary }, issueFilter === 'alligator cracking' && { color: '#FFFFFF' }]}>Alligator Crack</Text>
           </TouchableOpacity>
         </View>
 
         {/* Search & Filter Bar */}
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={AppColors.placeholder} />
+        <View style={[styles.searchBar, { backgroundColor: isDark ? colors.inputBg : AppColors.surface, borderColor: isDark ? colors.inputBorder : AppColors.border }]}>
+          <Ionicons name="search" size={18} color={isDark ? colors.placeholder : AppColors.placeholder} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: isDark ? colors.inputText : AppColors.textPrimary }]}
             placeholder="Search by ID, Road, Defect, or Authority…"
-            placeholderTextColor={AppColors.placeholder}
+            placeholderTextColor={isDark ? colors.inputPlaceholder : AppColors.placeholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
           {searchQuery.trim() ? (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={16} color={AppColors.placeholder} />
+              <Ionicons name="close-circle" size={16} color={isDark ? colors.placeholder : AppColors.placeholder} />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -612,58 +635,86 @@ export default function MainOfficerDashboard() {
         {/* Tab Filters */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll}>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'all' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'all' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('all')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'all' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'all' && styles.tabChipTextActive]}>
               All ({analytics.total})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'pending_verification' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'pending_verification' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('pending_verification')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'pending_verification' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'pending_verification' && styles.tabChipTextActive]}>
               Pending Insp ({analytics.pendingVerification})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'verified' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'verified' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('verified')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'verified' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'verified' && styles.tabChipTextActive]}>
               Verified ({analytics.verified})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'assigned' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'assigned' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('assigned')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'assigned' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'assigned' && styles.tabChipTextActive]}>
               Assigned ({analytics.assigned})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'in_progress' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'in_progress' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('in_progress')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'in_progress' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'in_progress' && styles.tabChipTextActive]}>
               In Progress ({analytics.inProgress})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'resolved' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'resolved' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('resolved')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'resolved' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'resolved' && styles.tabChipTextActive]}>
               Resolved ({analytics.resolved})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tabChip, activeFilter === 'multi_dept' && styles.tabChipActive]}
+            style={[
+              styles.tabChip,
+              { backgroundColor: isDark ? colors.surface : AppColors.surface, borderColor: colors.border },
+              activeFilter === 'multi_dept' && [styles.tabChipActive, { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }],
+            ]}
             onPress={() => setActiveFilter('multi_dept')}
           >
-            <Text style={[styles.tabChipText, activeFilter === 'multi_dept' && styles.tabChipTextActive]}>
+            <Text style={[styles.tabChipText, { color: colors.textPrimary }, activeFilter === 'multi_dept' && styles.tabChipTextActive]}>
               Multi-Dept ({analytics.multiDept})
             </Text>
           </TouchableOpacity>

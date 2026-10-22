@@ -1,5 +1,7 @@
 import AuthInput from '@/components/AuthInput';
+import ThemeToggle from '@/components/ThemeToggle';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { auth, db } from '@/firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -38,6 +40,7 @@ function validate(email: string, password: string) {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const [persona, setPersona] = useState<UserPersona>('citizen');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -194,7 +197,10 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+      <View style={styles.topBar}>
+        <ThemeToggle showLabel />
+      </View>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -206,23 +212,23 @@ export default function LoginScreen() {
         >
           {/* Logo / Brand Header */}
           <View style={styles.brandRow} accessible accessibilityRole="header">
-            <View style={styles.iconCircle}>
-              <Ionicons name="eye" size={28} color={AppColors.white} />
+            <View style={[styles.iconCircle, { backgroundColor: colors.buttonPrimary }]}>
+              <Ionicons name="eye" size={28} color="#FFFFFF" />
             </View>
             <View>
-              <Text style={styles.appName}>CivicEye</Text>
-              <Text style={styles.deptBadge}>Road Maintenance Portal</Text>
+              <Text style={[styles.appName, { color: colors.textOnDark }]}>CivicEye</Text>
+              <Text style={[styles.deptBadge, { color: colors.borderLight }]}>Road Maintenance Portal</Text>
             </View>
           </View>
 
           {/* Persona Selection */}
-          <View style={styles.personaContainer}>
-            <Text style={styles.personaHeading}>Who are you?</Text>
-            <View style={styles.toggleRow}>
+          <View style={[styles.personaContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.personaHeading, { color: colors.textSecondary }]}>Who are you?</Text>
+            <View style={[styles.toggleRow, { backgroundColor: colors.surfaceElevated }]}>
               <TouchableOpacity
                 style={[
                   styles.toggleBtn,
-                  persona === 'citizen' && styles.toggleBtnActive,
+                  persona === 'citizen' && [styles.toggleBtnActive, { backgroundColor: colors.buttonPrimary }],
                 ]}
                 onPress={() => handlePersonaChange('citizen')}
                 accessible
@@ -233,12 +239,13 @@ export default function LoginScreen() {
                 <Ionicons
                   name="person"
                   size={18}
-                  color={persona === 'citizen' ? AppColors.white : AppColors.textSecondary}
+                  color={persona === 'citizen' ? '#FFFFFF' : colors.textSecondary}
                 />
                 <Text
                   style={[
                     styles.toggleBtnText,
-                    persona === 'citizen' && styles.toggleBtnTextActive,
+                    { color: colors.textSecondary },
+                    persona === 'citizen' && [styles.toggleBtnTextActive, { color: '#FFFFFF' }],
                   ]}
                 >
                   Citizen
@@ -248,7 +255,7 @@ export default function LoginScreen() {
               <TouchableOpacity
                 style={[
                   styles.toggleBtn,
-                  persona === 'officer' && styles.toggleBtnActive,
+                  persona === 'officer' && [styles.toggleBtnActive, { backgroundColor: colors.buttonPrimary }],
                 ]}
                 onPress={() => handlePersonaChange('officer')}
                 accessible
@@ -259,12 +266,13 @@ export default function LoginScreen() {
                 <Ionicons
                   name="shield-checkmark"
                   size={18}
-                  color={persona === 'officer' ? AppColors.white : AppColors.textSecondary}
+                  color={persona === 'officer' ? '#FFFFFF' : colors.textSecondary}
                 />
                 <Text
                   style={[
                     styles.toggleBtnText,
-                    persona === 'officer' && styles.toggleBtnTextActive,
+                    { color: colors.textSecondary },
+                    persona === 'officer' && [styles.toggleBtnTextActive, { color: '#FFFFFF' }],
                   ]}
                 >
                   Officer
@@ -275,10 +283,10 @@ export default function LoginScreen() {
 
           {/* Screen Title */}
           <View style={styles.titleSection}>
-            <Text style={styles.heading}>
+            <Text style={[styles.heading, { color: colors.textOnDark }]}>
               {persona === 'citizen' ? 'Citizen Sign In' : 'Officer Sign In'}
             </Text>
-            <Text style={styles.subheading}>
+            <Text style={[styles.subheading, { color: colors.textOnDarkSecondary }]}>
               {persona === 'citizen'
                 ? 'Report potholes, road damage, and track repair status.'
                 : 'Road Maintenance Department — Main Officers & Field Inspectors.'}
@@ -320,7 +328,11 @@ export default function LoginScreen() {
 
             {/* Login Button */}
             <TouchableOpacity
-              style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
+              style={[
+                styles.primaryBtn,
+                { backgroundColor: colors.buttonPrimary },
+                loading && styles.primaryBtnDisabled,
+              ]}
               onPress={handleLogin}
               disabled={loading}
               accessible
@@ -330,15 +342,15 @@ export default function LoginScreen() {
             >
               {loading ? (
                 <ActivityIndicator
-                  color={AppColors.white}
+                  color="#FFFFFF"
                   accessibilityLabel="Signing in, please wait"
                 />
               ) : (
                 <View style={styles.btnContent}>
-                  <Text style={styles.primaryBtnText}>
+                  <Text style={[styles.primaryBtnText, { color: colors.buttonText }]}>
                     {persona === 'citizen' ? 'Sign In as Citizen' : 'Sign In as Officer'}
                   </Text>
-                  <Ionicons name="arrow-forward" size={18} color={AppColors.white} />
+                  <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
                 </View>
               )}
             </TouchableOpacity>
@@ -347,7 +359,7 @@ export default function LoginScreen() {
           {/* Navigate to Sign Up (Citizen Only) */}
           {persona === 'citizen' ? (
             <View style={styles.switchRow}>
-              <Text style={styles.switchText}>Don&apos;t have an account? </Text>
+              <Text style={[styles.switchText, { color: colors.textOnDarkSecondary }]}>Don&apos;t have an account? </Text>
               <TouchableOpacity
                 onPress={() => router.push('/signup')}
                 accessible
@@ -355,13 +367,13 @@ export default function LoginScreen() {
                 accessibilityLabel="Sign Up"
                 accessibilityHint="Go to Sign Up screen to create a new citizen account"
               >
-                <Text style={styles.switchLink}>Sign Up</Text>
+                <Text style={[styles.switchLink, { color: colors.buttonPrimary }]}>Sign Up</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.officerNotice}>
-              <Ionicons name="information-circle-outline" size={16} color={AppColors.textSecondary} />
-              <Text style={styles.officerNoticeText}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textOnDarkSecondary} />
+              <Text style={[styles.officerNoticeText, { color: colors.textOnDarkSecondary }]}>
                 Officer credentials and roles are provisioned by the Road Maintenance Administration.
               </Text>
             </View>
@@ -374,6 +386,12 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppColors.background },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,

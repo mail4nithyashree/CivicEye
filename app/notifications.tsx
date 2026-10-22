@@ -1,5 +1,6 @@
 import { AppColors } from '@/constants/colors';
-import { auth, db } from '@/firebaseConfig';
+import { useAppTheme } from '@/context/ThemeContext';
+import { auth } from '@/firebaseConfig';
 import { subscribeToUserComplaints, type Complaint } from '@/services/complaintService';
 import {
   getLocallyReadNotificationIds,
@@ -38,6 +39,7 @@ export interface DisplayNotification {
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { colors, isDark } = useAppTheme();
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [firestoreNotifs, setFirestoreNotifs] = useState<CivicNotification[]>([]);
   const [userComplaints, setUserComplaints] = useState<Complaint[]>([]);
@@ -59,7 +61,6 @@ export default function NotificationsScreen() {
   // 2. Real-time Firestore Notifications listener
   useEffect(() => {
     if (!user) return;
-    setLoading(true);
 
     const unsubNotifs = subscribeToCitizenNotifications(
       user.uid,
@@ -310,6 +311,8 @@ export default function NotificationsScreen() {
         return { icon: 'git-network-outline' as const, color: '#D97706', bg: '#FEF3C7' };
       case 'work_in_progress':
         return { icon: 'construct' as const, color: '#EA580C', bg: '#FFEDD5' };
+      case 'complaint_deleted':
+        return { icon: 'trash-outline' as const, color: '#DC2626', bg: '#FEE2E2' };
       case 'complaint_raised':
       default:
         return { icon: 'notifications-outline' as const, color: AppColors.primary, bg: '#EFF6FF' };
@@ -322,72 +325,83 @@ export default function NotificationsScreen() {
 
       return (
         <TouchableOpacity
-          style={[styles.notifCard, !item.isRead && styles.notifCardUnread]}
+          style={[
+            styles.notifCard,
+            isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+            !item.isRead && (isDark ? { backgroundColor: colors.surfaceElevated, borderColor: colors.buttonPrimary, borderWidth: 1.5 } : styles.notifCardUnread)
+          ]}
           onPress={() => handleNotificationPress(item)}
           accessible
           accessibilityRole="button"
           accessibilityLabel={item.title}
         >
-          <View style={[styles.iconWrap, { backgroundColor: bg }]}>
+          <View style={[styles.iconWrap, { backgroundColor: isDark ? colors.inputBg : bg }]}>
             <Ionicons name={icon} size={22} color={color} />
           </View>
 
           <View style={styles.notifContent}>
             <View style={styles.topRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                {!item.isRead && <View style={styles.unreadDot} />}
-                <Text style={[styles.notifTitle, !item.isRead && styles.notifTitleBold]} numberOfLines={1}>
+                {!item.isRead && <View style={[styles.unreadDot, isDark && { backgroundColor: colors.buttonPrimary }]} />}
+                <Text
+                  style={[
+                    styles.notifTitle,
+                    isDark && { color: colors.textPrimary },
+                    !item.isRead && styles.notifTitleBold
+                  ]}
+                  numberOfLines={1}
+                >
                   {item.title}
                 </Text>
               </View>
-              <Text style={styles.notifDate}>
+              <Text style={[styles.notifDate, isDark && { color: colors.textSecondary }]}>
                 {item.date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
               </Text>
             </View>
 
-            <Text style={styles.notifMessage} numberOfLines={3}>
+            <Text style={[styles.notifMessage, isDark && { color: colors.textSecondary }]} numberOfLines={3}>
               {item.message}
             </Text>
 
             <View style={styles.metaBadgeRow}>
               {item.region && (
-                <View style={styles.regionBadge}>
-                  <Ionicons name="location-outline" size={11} color="#0369A1" />
-                  <Text style={styles.regionBadgeText}>{item.region}</Text>
+                <View style={[styles.regionBadge, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
+                  <Ionicons name="location-outline" size={11} color={isDark ? colors.buttonPrimary : '#0369A1'} />
+                  <Text style={[styles.regionBadgeText, isDark && { color: colors.textPrimary }]}>{item.region}</Text>
                 </View>
               )}
               {item.complaintId && (
-                <View style={styles.complaintIdBadge}>
-                  <Text style={styles.complaintIdBadgeText}>{item.complaintId}</Text>
+                <View style={[styles.complaintIdBadge, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
+                  <Text style={[styles.complaintIdBadgeText, isDark && { color: colors.textPrimary }]}>{item.complaintId}</Text>
                 </View>
               )}
             </View>
           </View>
 
-          <Ionicons name="chevron-forward" size={16} color={AppColors.placeholder} />
+          <Ionicons name="chevron-forward" size={16} color={isDark ? colors.textSecondary : AppColors.placeholder} />
         </TouchableOpacity>
       );
     },
-    [handleNotificationPress]
+    [handleNotificationPress, isDark, colors]
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Back"
         >
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
 
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerTitle}>In-App Alerts &amp; Notifications</Text>
+          <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>In-App Alerts &amp; Notifications</Text>
           {unreadCount > 0 && (
-            <View style={styles.headerUnreadBadge}>
+            <View style={[styles.headerUnreadBadge, isDark && { backgroundColor: colors.buttonPrimary }]}>
               <Text style={styles.headerUnreadText}>{unreadCount} New</Text>
             </View>
           )}
@@ -395,7 +409,7 @@ export default function NotificationsScreen() {
 
         {unreadCount > 0 ? (
           <TouchableOpacity onPress={handleMarkAllRead} style={styles.markAllBtn}>
-            <Text style={styles.markAllText}>Read All</Text>
+            <Text style={[styles.markAllText, isDark && { color: colors.buttonPrimary }]}>Read All</Text>
           </TouchableOpacity>
         ) : (
           <View style={{ width: 44 }} />
@@ -403,39 +417,71 @@ export default function NotificationsScreen() {
       </View>
 
       {/* Filter Tabs */}
-      <View style={styles.filterRow}>
+      <View style={[styles.filterRow, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
-          style={[styles.filterChip, filterType === 'all' && styles.filterChipActive]}
+          style={[
+            styles.filterChip,
+            isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+            filterType === 'all' && [styles.filterChipActive, isDark && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }]
+          ]}
           onPress={() => setFilterType('all')}
         >
-          <Text style={[styles.filterChipText, filterType === 'all' && styles.filterChipTextActive]}>
+          <Text style={[
+            styles.filterChipText,
+            isDark && { color: colors.textPrimary },
+            filterType === 'all' && [styles.filterChipTextActive, isDark && { color: colors.white }]
+          ]}>
             All ({mergedNotifications.length})
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.filterChip, filterType === 'unread' && styles.filterChipActive]}
+          style={[
+            styles.filterChip,
+            isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+            filterType === 'unread' && [styles.filterChipActive, isDark && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }]
+          ]}
           onPress={() => setFilterType('unread')}
         >
-          <Text style={[styles.filterChipText, filterType === 'unread' && styles.filterChipTextActive]}>
+          <Text style={[
+            styles.filterChipText,
+            isDark && { color: colors.textPrimary },
+            filterType === 'unread' && [styles.filterChipTextActive, isDark && { color: colors.white }]
+          ]}>
             Unread ({unreadCount})
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.filterChip, filterType === 'inspections' && styles.filterChipActive]}
+          style={[
+            styles.filterChip,
+            isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+            filterType === 'inspections' && [styles.filterChipActive, isDark && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }]
+          ]}
           onPress={() => setFilterType('inspections')}
         >
-          <Text style={[styles.filterChipText, filterType === 'inspections' && styles.filterChipTextActive]}>
+          <Text style={[
+            styles.filterChipText,
+            isDark && { color: colors.textPrimary },
+            filterType === 'inspections' && [styles.filterChipTextActive, isDark && { color: colors.white }]
+          ]}>
             Inspections
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.filterChip, filterType === 'resolutions' && styles.filterChipActive]}
+          style={[
+            styles.filterChip,
+            isDark && { backgroundColor: colors.card, borderColor: colors.borderLight },
+            filterType === 'resolutions' && [styles.filterChipActive, isDark && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary }]
+          ]}
           onPress={() => setFilterType('resolutions')}
         >
-          <Text style={[styles.filterChipText, filterType === 'resolutions' && styles.filterChipTextActive]}>
+          <Text style={[
+            styles.filterChipText,
+            isDark && { color: colors.textPrimary },
+            filterType === 'resolutions' && [styles.filterChipTextActive, isDark && { color: colors.white }]
+          ]}>
             Resolutions
           </Text>
         </TouchableOpacity>
@@ -444,16 +490,16 @@ export default function NotificationsScreen() {
       {/* Content */}
       {loading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={AppColors.primary} />
-          <Text style={styles.loadingText}>Syncing Road Notifications…</Text>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.textOnDarkSecondary }]}>Syncing Road Notifications…</Text>
         </View>
       ) : filteredList.length === 0 ? (
         <View style={styles.centered}>
-          <Ionicons name="notifications-off-outline" size={64} color={AppColors.placeholder} />
-          <Text style={styles.emptyTitle}>
+          <Ionicons name="notifications-off-outline" size={64} color={colors.disabled} />
+          <Text style={[styles.emptyTitle, { color: colors.textOnDark }]}>
             {filterType === 'unread' ? 'No Unread Notifications' : 'No Notifications Yet'}
           </Text>
-          <Text style={styles.emptySubtitle}>
+          <Text style={[styles.emptySubtitle, { color: colors.textOnDarkSecondary }]}>
             {filterType === 'unread'
               ? 'All alerts have been marked as read.'
               : 'You will receive real-time notifications when your complaints are registered, inspected by a Field Inspector, allocated budget, and resolved.'}
@@ -470,7 +516,7 @@ export default function NotificationsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => setRefreshing(true)}
-              tintColor={AppColors.primary}
+              tintColor={colors.primary}
             />
           }
           initialNumToRender={10}

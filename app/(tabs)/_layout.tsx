@@ -1,5 +1,5 @@
 import { HapticTab } from '@/components/haptic-tab';
-import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import React from 'react';
@@ -10,17 +10,21 @@ function TabIcon({
   nameFocused,
   nameUnfocused,
   focused,
+  color,
+  isDark,
 }: {
   nameFocused: keyof typeof Ionicons.glyphMap;
   nameUnfocused: keyof typeof Ionicons.glyphMap;
   focused: boolean;
+  color: string;
+  isDark: boolean;
 }) {
   return (
-    <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+    <View style={[styles.iconWrap, focused && (isDark ? styles.iconWrapActiveDark : styles.iconWrapActiveLight)]}>
       <Ionicons
         name={focused ? nameFocused : nameUnfocused}
         size={25}
-        color={focused ? AppColors.primary : '#64748B'}
+        color={color}
       />
     </View>
   );
@@ -28,34 +32,38 @@ function TabIcon({
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { colors, isDark } = useAppTheme();
 
   // Ensure bottom clearance above default Android 3-button nav (home, back, recent) or iOS home bar
   const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 20);
   const tabHeight = 64 + bottomPadding;
 
+  const activeColor = isDark ? '#B0E0E6' : colors.primary;
+  const inactiveColor = isDark ? '#A2B7C4' : '#64748B';
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: AppColors.primary,
-        tabBarInactiveTintColor: '#64748B',
+        tabBarActiveTintColor: activeColor,
+        tabBarInactiveTintColor: inactiveColor,
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E2E8F0',
+          backgroundColor: colors.tabBar,
+          borderTopColor: colors.tabBarBorder,
           borderTopWidth: 1.5,
           height: tabHeight,
           paddingBottom: bottomPadding,
           paddingTop: 8,
           ...Platform.select({
             web: {
-              boxShadow: '0px -4px 10px rgba(15, 23, 42, 0.1)',
+              boxShadow: isDark ? '0px -4px 10px rgba(0, 0, 0, 0.4)' : '0px -4px 10px rgba(15, 23, 42, 0.1)',
             },
             default: {
               elevation: 14,
-              shadowColor: '#0F172A',
+              shadowColor: isDark ? '#000000' : '#0F172A',
               shadowOffset: { width: 0, height: -4 },
-              shadowOpacity: 0.1,
+              shadowOpacity: isDark ? 0.4 : 0.1,
               shadowRadius: 10,
             },
           }),
@@ -76,6 +84,8 @@ export default function TabLayout() {
               nameFocused="home"
               nameUnfocused="home-outline"
               focused={focused}
+              color={focused ? activeColor : inactiveColor}
+              isDark={isDark}
             />
           ),
         }}
@@ -89,6 +99,8 @@ export default function TabLayout() {
               nameFocused="map"
               nameUnfocused="map-outline"
               focused={focused}
+              color={focused ? activeColor : inactiveColor}
+              isDark={isDark}
             />
           ),
         }}
@@ -102,6 +114,8 @@ export default function TabLayout() {
               nameFocused="person"
               nameUnfocused="person-outline"
               focused={focused}
+              color={focused ? activeColor : inactiveColor}
+              isDark={isDark}
             />
           ),
         }}
@@ -118,7 +132,10 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
   },
-  iconWrapActive: {
-    backgroundColor: 'rgba(2, 132, 199, 0.12)',
+  iconWrapActiveLight: {
+    backgroundColor: 'rgba(26, 86, 219, 0.12)',
+  },
+  iconWrapActiveDark: {
+    backgroundColor: 'rgba(176, 224, 230, 0.2)',
   },
 });

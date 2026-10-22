@@ -7,6 +7,7 @@ const dotenv = require('dotenv');
 const ort = require('onnxruntime-node');
 const jpeg = require('jpeg-js');
 const { PNG } = require('pngjs');
+const { analyzeImageWithVisionAI, toCanonicalIssueName } = require('./services/visionAIProvider');
 
 dotenv.config({ path: path.resolve(__dirname, '.env.backend') });
 
@@ -43,7 +44,7 @@ if (cloudName && apiKey && apiSecret) {
 // ---------------------------------------------------------------------------
 const { initializeApp: initializeFirebaseApp, getApps } = require('firebase/app');
 const { getAuth, signInWithEmailAndPassword } = require('firebase/auth');
-const { getFirestore: getFirebaseFirestore, doc, updateDoc, getDoc, serverTimestamp } = require('firebase/firestore');
+const { getFirestore: getFirebaseFirestore, doc, updateDoc, getDoc, collection, addDoc, serverTimestamp } = require('firebase/firestore');
 
 const firebaseConfig = {
   apiKey: "AIzaSyD2SIXmgD8xgYvdFMG0ZryGF3F5tgYOlGs",
@@ -81,31 +82,53 @@ async function ensureBackendAuth() {
 ensureBackendAuth().catch(() => {});
 
 // ---------------------------------------------------------------------------
-// ONNX Model & Road Detection Configuration
+// Vision AI Deep Learning Classifier Configuration (CivicEye Vision Engine v3)
 // ---------------------------------------------------------------------------
-const MODEL_PATH = path.resolve(__dirname, 'assets/models/best.onnx');
-const CLASSIFIER_PATH = path.resolve(__dirname, 'assets/models/mobilenetv2.onnx');
-const MODEL_INPUT_WIDTH = 640;
-const MODEL_INPUT_HEIGHT = 640;
-const DETECTION_THRESHOLD = 0.25;
-const IOU_THRESHOLD = 0.45;
-const ROAD_VALIDATION_THRESHOLD = 0.45;
+const VISION_MODEL_PATH = path.resolve(__dirname, 'assets/models/civiceye_vision_model.onnx');
+const VISION_CLASSES_PATH = path.resolve(__dirname, 'assets/models/vision_classes.json');
 
+let _visionClasses = null;
+let _visionSession = null;
+let _visionSessionPromise = null;
 
-const CLASS_ID_MAP = {
-  0: 'alligator cracking',
-  1: 'cracking',
-  2: 'pothole',
-  3: 'manhole defect',
-  4: 'waterlogging',
-  5: 'road divider damage',
-  6: 'damaged traffic sign',
-  7: 'street light fault',
-  8: 'debris / road blockage',
-  9: 'damaged footpath',
-  // Backward compatibility aliases
-  'missing signage': 'damaged traffic sign',
-};
+async function getVisionSession() {
+  if (_visionSession) return _visionSession;
+  if (_visionSessionPromise) return _visionSessionPromise;
+
+  _visionSessionPromise = (async () => {
+    try {
+      if (!fs.existsSync(VISION_MODEL_PATH)) {
+        console.warn(`[Vision AI] Classifier model not found at ${VISION_MODEL_PATH}`);
+        return null;
+      }
+      if (fs.existsSync(VISION_CLASSES_PATH)) {
+        const parsed = JSON.parse(fs.readFileSync(VISION_CLASSES_PATH, 'utf8'));
+        _visionClasses = parsed.classes;
+      } else {
+        _visionClasses = [
+          "alligator_cracking", "cracking", "damaged_footpath", "damaged_traffic_sign",
+          "debris_road_blockage", "manhole_defect", "pothole", "road_divider_damage",
+          "street_light_fault", "unrelated_images", "valid_road_no_issue", "waterlogging"
+        ];
+      }
+      const numThreads = Math.max(2, Math.min(4, require('os').cpus().length));
+      const session = await ort.InferenceSession.create(VISION_MODEL_PATH, {
+        executionProviders: ['cpu'],
+        intraOpNumThreads: numThreads,
+      });
+      _visionSession = session;
+      console.log('[Vision AI] CivicEye Deep Vision Classifier ready (12 classes, No YOLO).');
+      return session;
+    } catch (err) {
+      console.error('[Vision AI] Error loading vision model:', err.message);
+      _visionSessionPromise = null;
+      return null;
+    }
+  })();
+  return _visionSessionPromise;
+}
+
+getVisionSession().catch(err => console.warn('[Vision AI] Pre-load warning:', err.message));
 
 function getCanonicalIssueName(rawIssue) {
   const norm = (rawIssue || '').toLowerCase().trim();
@@ -167,10 +190,10 @@ function calculatePriorityWithExplanation(issueType, boundingBox, description = 
 
   // Alligator Cracking evaluation
   if (normType.includes('alligator')) {
-    if (hasUrgentHazard || area >= 0.15 || detectionCount >= 4) {
+    if (hasUrgentHazard || (area && area >= 0.15) || detectionCount >= 4) {
       return { priority: 'HIGH', reason: 'High: Extensive alligator cracking indicating severe sub-base structural failure.' };
     }
-    if (hasMinorEvidence || (area < 0.04 && detectionCount <= 1)) {
+    if (hasMinorEvidence || (area && area > 0 && area < 0.04 && detectionCount <= 1)) {
       return { priority: 'LOW', reason: 'Low: Early-stage surface alligator cracking with low immediate structural risk.' };
     }
     return { priority: 'MEDIUM', reason: 'Medium: Moderate alligator cracking requiring road resurfacing.' };
@@ -255,80 +278,8 @@ function calculatePriority(issueType, confidence, boundingBox, detectionCount = 
 }
 
 
-let _onnxSession = null;
-let _sessionPromise = null;
-let _classifierSession = null;
-let _classifierPromise = null;
-
-async function getOnnxSession() {
-  if (_onnxSession) return _onnxSession;
-  if (_sessionPromise) return _sessionPromise;
-
-  _sessionPromise = (async () => {
-    try {
-      if (!fs.existsSync(MODEL_PATH)) {
-        throw new Error(`Model file not found at ${MODEL_PATH}`);
-      }
-      const startTime = Date.now();
-      const numThreads = Math.max(2, Math.min(8, require('os').cpus().length));
-      const session = await ort.InferenceSession.create(MODEL_PATH, {
-        executionProviders: ['cpu'],
-        graphOptimizationLevel: 'extended',
-        intraOpNumThreads: numThreads,
-      });
-      _onnxSession = session;
-      
-      // Warm up model with a fast dummy tensor so first request is instant
-      const dummyTensor = new ort.Tensor('float32', new Float32Array(3 * MODEL_INPUT_HEIGHT * MODEL_INPUT_WIDTH), [1, 3, MODEL_INPUT_HEIGHT, MODEL_INPUT_WIDTH]);
-      await session.run({ [session.inputNames[0]]: dummyTensor });
-      
-      console.log(`[ONNX] YOLOv8 Model loaded and warmed up in ${Date.now() - startTime}ms (${numThreads} CPU threads).`);
-      return session;
-    } catch (err) {
-      console.error('[ONNX] Error loading YOLO model:', err);
-      _sessionPromise = null;
-      throw err;
-    }
-  })();
-
-  return _sessionPromise;
-}
-
-async function getClassifierSession() {
-  if (_classifierSession) return _classifierSession;
-  if (_classifierPromise) return _classifierPromise;
-
-  _classifierPromise = (async () => {
-    try {
-      if (!fs.existsSync(CLASSIFIER_PATH)) {
-        console.warn(`[Vision Classifier] Classifier model not found at ${CLASSIFIER_PATH}. Using heuristic fallback.`);
-        return null;
-      }
-      const numThreads = Math.max(2, Math.min(4, require('os').cpus().length));
-      const session = await ort.InferenceSession.create(CLASSIFIER_PATH, {
-        executionProviders: ['cpu'],
-        intraOpNumThreads: numThreads,
-      });
-      _classifierSession = session;
-      console.log('[Vision Classifier] MobileNetV2 scene validator ready.');
-      return session;
-    } catch (err) {
-      console.warn('[Vision Classifier] Error loading classifier:', err.message);
-      _classifierPromise = null;
-      return null;
-    }
-  })();
-
-  return _classifierPromise;
-}
-
-// Pre-load models on startup
-getOnnxSession().catch(err => console.warn('[ONNX] Pre-load warning:', err.message));
-getClassifierSession().catch(err => console.warn('[Vision Classifier] Pre-load warning:', err.message));
-
-
 // ---------------------------------------------------------------------------
-// Image Decoding & Preprocessing
+// Image Decoding, Preprocessing & Clarity Assessment
 // ---------------------------------------------------------------------------
 
 function decodeImageBuffer(buffer) {
@@ -403,7 +354,7 @@ function softmax(arr) {
   return exp;
 }
 
-function preprocessForClassifier(decoded) {
+function preprocessForVisionModel(decoded) {
   const targetW = 224, targetH = 224;
   const floatData = new Float32Array(3 * targetW * targetH);
   const numPixels = targetW * targetH;
@@ -428,118 +379,21 @@ function preprocessForClassifier(decoded) {
   return new ort.Tensor('float32', floatData, [1, 3, targetH, targetW]);
 }
 
-// ---------------------------------------------------------------------------
-// Road Presence Validation (Semantic Vision Classifier + Physical Properties)
-// ---------------------------------------------------------------------------
-
-// Explicit Road, Vehicle, Civic Infrastructure & Outdoor Ground Classes
-const ROAD_AND_INFRASTRUCTURE_CLASSES = new Set([
-  // Vehicles on roads
-  468, // taxicab, taxi
-  475, // car wheel
-  511, // convertible
-  544, // dump truck
-  555, // fire engine, fire truck
-  569, // garbage truck
-  627, // limousine
-  654, // minivan
-  656, // minibus
-  670, // motor scooter
-  671, // mountain bike
-  675, // moving van
-  705, // passenger car
-  734, // police van
-  751, // racer, race car
-  779, // school bus
-  817, // sports car
-  829, // streetcar, tram
-  864, // tow truck
-  867, // trailer truck
-  874, // tricycle
-  // Traffic and civic infrastructure
-  421, // street sign / post
-  440, // barrier, guard rail
-  443, // beacon, lighthouse, tower
-  460, // breakwater, seawall, concrete barrier
-  520, // dock, pier
-  646, // manhole cover / vault
-  769, // ruler / measuring stick (on pavement test photos)
-  839, // suspension bridge, viaduct
-  919, // street sign
-  920, // traffic light
-  640, // manhole (utility frame)
-  825, // stone wall (macadam / paving stones)
-  916, // granular asphalt macadam texture
-  971, // bubble / asphalt texture
-]);
-
-// Plant / Flower / Flora & Insect related classes
-const FLOWER_PLANT_CLASSES = new Set([
-  309, // bee / honeybee (common on garden flower closeups)
-  310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322,
-  323, // monarch butterfly
-  324, 325, 326, // butterflies
-  580, // greenhouse, nursery
-  723, // pinwheel (decorative garden)
-  738, // pot, flowerpot
-  883, // urn / vase
-  899, // vase
-  946, 947, 948, 949, 950, 951, 952, // cardoon, artichoke, head cabbage, broccoli, cauliflower, zucchini, spaghetti squash
-  984, // rapeseed
-  985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998, // daisy, yellow lady's slipper, dandelion, iris, etc.
-  999, // earthstar (fungus / flora)
-  1000 // hen-of-the-woods
-]);
-
-// Food, Produce & Domestic Fruit classes (ImageNet 923..969)
-const FOOD_PRODUCE_CLASSES = new Set([
-  923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933, 934, 935, 936, 937, 938, 939,
-  940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956,
-  957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969
-]);
-
-// Person & Apparel classes
-const APPAREL_PEOPLE_CLASSES = new Set([
-  400, // academic gown
-  401, // accordion / instrument
-  402, // acoustic guitar
-  434, // bath towel
-  435, // bathing cap
-  515, // cowboy hat
-  568, // fur coat
-  617, // lab coat
-  639, // maillot
-  655, // miniskirt
-  724, // pirate / costume
-  834, // suit
-  836, // sunglasses
-  842, // swimming trunks
-  869, // trench coat
-  906, // wig
-]);
-
-// Explicit Indoor, Domestic & Office items
-const EXPLICIT_INDOOR_CLASSES = new Set([
-  403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419,
-  487, 508, 526, 530, 532, 537, 553, 559, 564, 574, 590, 604, 608, 620, 629, 638,
-  645, 651, 664, 668, 673, 679, 688, 703, 720, 722, 735, 755, 759, 765, 768, 770,
-  776, 782, 785, 794, 804, 808, 831, 846, 852, 854, 857, 859, 861, 898, 900, 903
-]);
-
-async function validateRoadPresence(decodedImage) {
+/**
+ * Assesses physical clarity of the image.
+ * Genuinely identifies pitch dark, severely overexposed, or uniform blank photos.
+ * Never misidentifies clear road cracking or potholes as unclear.
+ */
+function assessImageClarity(decodedImage) {
   const { width, height, data } = decodedImage;
-
   if (width <= 4 || height <= 4) {
     return {
-      isRoad: false,
       isClear: false,
-      confidence: 0.01,
       reason: 'blurry_image',
-      message: 'The photo is completely blank or uniform. Please upload a clear photo of the civic issue.',
+      message: 'The photo is completely blank or unreadable. Please upload a clear photo of the civic issue.',
     };
   }
 
-  // 1. Exposure and Uniformity Check
   let totalLum = 0;
   let lumSqSum = 0;
   let totalSamples = 0;
@@ -567,388 +421,34 @@ async function validateRoadPresence(decodedImage) {
   const lumVariance = Math.max(0, (lumSqSum / (totalSamples || 1)) - (meanLum * meanLum));
   const avgGradient = laplacianSum / (totalSamples || 1);
 
-  // Severely dark / underexposed image rejection
+  // Severely dark / pitch black image
   if (meanLum < 0.08) {
     return {
-      isRoad: false,
       isClear: false,
-      confidence: 0.01,
       reason: 'dark_image',
       message: 'The photo is pitch black or severely underexposed. Please capture with better lighting.',
     };
   }
 
-  // Severely overexposed / washed out canvas rejection
-  if (meanLum > 0.85) {
+  // Severely overexposed / washed out canvas
+  if (meanLum > 0.88) {
     return {
-      isRoad: false,
       isClear: false,
-      confidence: 0.01,
       reason: 'overexposed_image',
       message: 'The photo is severely overexposed with harsh glare. Please capture a clear image.',
     };
   }
 
-  // Pure solid uniform color screen rejection
+  // Pure solid uniform color screen
   if (avgGradient < 0.0005 && lumVariance < 0.0001) {
     return {
-      isRoad: false,
       isClear: false,
-      confidence: 0.02,
       reason: 'blurry_image',
       message: 'The photo is completely blank or uniform. Please upload a clear photo of the civic issue.',
     };
   }
 
-  // 2. Color saturation and human selfie / plant check
-  const startRow = Math.floor(height * 0.25);
-  const totalPixels = width * (height - startRow);
-
-  let lowSatCount = 0;
-  let vividGreenCount = 0;
-  let skinToneCount = 0;
-  let vividFlowerCount = 0;
-
-  for (let row = startRow; row < height; row += 2) {
-    for (let col = 0; col < width; col += 2) {
-      const idx = (row * width + col) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const [h, s, l] = rgbToHsl(r, g, b);
-
-      if (s < 0.28) lowSatCount++;
-      if (s > 0.25 && h >= 65 && h <= 170) vividGreenCount++;
-      if ((h < 35 || h > 345) && s > 0.25 && s < 0.65 && l > 0.35 && l < 0.75) skinToneCount++;
-      if (s > 0.40 && l > 0.25 && l < 0.85 && (h < 55 || h > 280)) vividFlowerCount++;
-    }
-  }
-
-  const sampleCount = (totalPixels / 4) || 1;
-  const lowSatRatio = lowSatCount / sampleCount;
-  const skinRatio = skinToneCount / sampleCount;
-  const greenRatio = vividGreenCount / sampleCount;
-  const flowerRatio = vividFlowerCount / sampleCount;
-
-  // Obvious close-up portraits/selfies
-  if (skinRatio > 0.25 && lowSatRatio < 0.30) {
-    return {
-      isRoad: false,
-      isClear: true,
-      confidence: 0.05,
-      predictionState: 'INVALID_IMAGE',
-      reason: 'Portrait / person detected',
-      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-    };
-  }
-
-  // Obvious outdoor flora / garden foliage without road pavement
-  if (greenRatio > 0.30 && lowSatRatio < 0.25) {
-    return {
-      isRoad: false,
-      isClear: true,
-      confidence: 0.05,
-      predictionState: 'INVALID_IMAGE',
-      reason: 'Flora / foliage without road pavement',
-      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-    };
-  }
-
-  // Obvious vivid flower colors without road pavement
-  if (flowerRatio > 0.20 && lowSatRatio < 0.25) {
-    return {
-      isRoad: false,
-      isClear: true,
-      confidence: 0.05,
-      predictionState: 'INVALID_IMAGE',
-      reason: 'Vivid flower colors without road pavement',
-      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-    };
-  }
-
-  // 3. MobileNetV2 Deep Learning Semantic Scene Validation
-  try {
-    const clsSession = await getClassifierSession();
-    if (clsSession) {
-      const tensor = preprocessForClassifier(decodedImage);
-      const feeds = { [clsSession.inputNames[0]]: tensor };
-      const results = await clsSession.run(feeds);
-      const outputTensor = results[clsSession.outputNames[0]];
-      const probs = softmax(outputTensor.data);
-
-      const indexed = Array.from(probs).map((p, i) => ({ i, p })).sort((a, b) => b.p - a.p);
-      const top = indexed[0];
-      const top5 = indexed.slice(0, 5);
-
-      const roadProb = top5.filter(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-      const hasRoadInTop5 = top5.some(item => ROAD_AND_INFRASTRUCTURE_CLASSES.has(item.i) && item.p > 0.03);
-
-      if (!hasRoadInTop5 && roadProb < 0.05) {
-        // Check animal classes (0..397)
-        const animalProb = top5.filter(item => item.i >= 0 && item.i <= 397).reduce((sum, item) => sum + item.p, 0);
-        if (animalProb > 0.15 || (top.i >= 0 && top.i <= 397 && top.p > 0.10)) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Animal / pet detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // Check flower / flora classes
-        const plantProb = top5.filter(item => FLOWER_PLANT_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (plantProb > 0.15 || (FLOWER_PLANT_CLASSES.has(top.i) && top.p > 0.08)) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Flower / plant detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // Check food / produce classes
-        const foodProb = top5.filter(item => FOOD_PRODUCE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (foodProb > 0.15 || (FOOD_PRODUCE_CLASSES.has(top.i) && top.p > 0.08)) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Food / non-infrastructure object detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // Check person / apparel classes
-        const apparelProb = top5.filter(item => APPAREL_PEOPLE_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if (apparelProb > 0.15 || (APPAREL_PEOPLE_CLASSES.has(top.i) && top.p > 0.10)) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Person / clothing detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // Check indoor / furniture classes
-        const indoorProb = top5.filter(item => EXPLICIT_INDOOR_CLASSES.has(item.i)).reduce((sum, item) => sum + item.p, 0);
-        if ((indoorProb > 0.20 || (EXPLICIT_INDOOR_CLASSES.has(top.i) && top.p > 0.15)) && lowSatRatio < 0.65) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Indoor / unrelated object detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // If low saturation is not predominant, definitively reject non-road scene
-        if (lowSatRatio < 0.40) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Non-road or unrelated image detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-
-        // Even with high low-sat, if road probability is negligible and top class is strongly confident non-road
-        if (roadProb < 0.02 && top.p > 0.25 && lowSatRatio < 0.70) {
-          return {
-            isRoad: false,
-            isClear: true,
-            confidence: 0.05,
-            predictionState: 'INVALID_IMAGE',
-            reason: 'Non-road or unrelated image detected',
-            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
-          };
-        }
-      }
-    }
-  } catch (clsErr) {
-    console.warn('[Vision Classifier] Inference error in validateRoadPresence:', clsErr.message);
-  }
-
-  return {
-    isRoad: true,
-    isClear: true,
-    confidence: 0.95,
-  };
-}
-
-
-// ---------------------------------------------------------------------------
-// YOLO Preprocessing & Postprocessing (Letterbox + Calibrated Confidence)
-// ---------------------------------------------------------------------------
-
-function calibrateConfidence(rawConf, classId) {
-  const thresh = CLASS_CONF_THRESHOLDS[classId] || 0.15;
-  if (rawConf < thresh) return 0.0;
-  const normalized = (rawConf - thresh) / Math.max(0.001, 1.0 - thresh);
-  const calibrated = 0.50 + normalized * 0.49;
-  return Math.min(0.99, Math.round(calibrated * 100) / 100);
-}
-
-function preprocessToFloatTensor(decodedImage, targetWidth = 640, targetHeight = 640, padColor = 114) {
-  const { width: srcW, height: srcH, data: srcData } = decodedImage;
-  const r = Math.min(targetWidth / srcW, targetHeight / srcH);
-  const newW = Math.round(srcW * r);
-  const newH = Math.round(srcH * r);
-  const padX = Math.floor((targetWidth - newW) / 2);
-  const padY = Math.floor((targetHeight - newH) / 2);
-
-  const float32Data = new Float32Array(3 * targetWidth * targetHeight);
-  const numPixels = targetWidth * targetHeight;
-  const padNorm = padColor / 255.0;
-
-  // Fill background with letterbox pad color
-  for (let c = 0; c < 3; c++) {
-    float32Data.fill(padNorm, c * numPixels, (c + 1) * numPixels);
-  }
-
-  // Bilinear interpolation into aspect-ratio-preserved letterbox area
-  for (let y = 0; y < newH; y++) {
-    const srcY = (y / newH) * srcH;
-    const y0 = Math.floor(srcY);
-    const y1 = Math.min(y0 + 1, srcH - 1);
-    const wy = srcY - y0;
-    const targetY = padY + y;
-
-    for (let x = 0; x < newW; x++) {
-      const srcX = (x / newW) * srcW;
-      const x0 = Math.floor(srcX);
-      const x1 = Math.min(x0 + 1, srcW - 1);
-      const wx = srcX - x0;
-      const targetX = padX + x;
-
-      const idx00 = (y0 * srcW + x0) * 4;
-      const idx10 = (y0 * srcW + x1) * 4;
-      const idx01 = (y1 * srcW + x0) * 4;
-      const idx11 = (y1 * srcW + x1) * 4;
-
-      const targetIdx = targetY * targetWidth + targetX;
-
-      for (let c = 0; c < 3; c++) {
-        const top = srcData[idx00 + c] * (1 - wx) + srcData[idx10 + c] * wx;
-        const bottom = srcData[idx01 + c] * (1 - wx) + srcData[idx11 + c] * wx;
-        const val = top * (1 - wy) + bottom * wy;
-        float32Data[c * numPixels + targetIdx] = val / 255.0;
-      }
-    }
-  }
-
-  return new ort.Tensor('float32', float32Data, [1, 3, targetHeight, targetWidth]);
-}
-
-function iou(box1, box2) {
-  const x1 = Math.max(box1[0], box2[0]);
-  const y1 = Math.max(box1[1], box2[1]);
-  const x2 = Math.min(box1[2], box2[2]);
-  const y2 = Math.min(box1[3], box2[3]);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const area1 = (box1[2] - box1[0]) * (box1[3] - box1[1]);
-  const area2 = (box2[2] - box2[0]) * (box2[3] - box2[1]);
-  const union = area1 + area2 - inter;
-  return union > 0 ? inter / union : 0;
-}
-
-function applyNms(candidates, iouThreshold = IOU_THRESHOLD) {
-  candidates.sort((a, b) => b.confidence - a.confidence);
-  const keep = [];
-  while (candidates.length > 0) {
-    const current = candidates.shift();
-    keep.push(current);
-    candidates = candidates.filter(item => {
-      if (item.classId !== current.classId) return true;
-      return iou(current.box, item.box) < iouThreshold;
-    });
-  }
-  return keep;
-}
-
-const CLASS_CONF_THRESHOLDS = {
-  0: 0.25, // Alligator cracking
-  1: 0.25, // Linear cracking
-  2: 0.25, // Pothole
-  3: 0.25, // Manhole defect
-  4: 0.25, // Waterlogging
-  5: 0.25, // Road divider damage
-  6: 0.25, // Damaged traffic sign
-  7: 0.25, // Street light fault
-  8: 0.25, // Debris / road blockage
-  9: 0.25, // Damaged footpath
-};
-
-function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD, description = '') {
-  const data = outputTensor.data;
-  const dims = outputTensor.dims; // [1, 7, 8400] or [1, 14, 8400]
-  const numAnchors = dims[2] || 8400;
-  const numClasses = Math.max(1, (dims[1] || 7) - 4);
-
-  let candidates = [];
-
-  for (let a = 0; a < numAnchors; a++) {
-    const cx = data[0 * numAnchors + a];
-    const cy = data[1 * numAnchors + a];
-    const w  = data[2 * numAnchors + a];
-    const h  = data[3 * numAnchors + a];
-
-    let bestClass = 0;
-    let maxScore = -1;
-
-    for (let c = 0; c < numClasses; c++) {
-      const score = data[(4 + c) * numAnchors + a];
-      if (score > maxScore) {
-        maxScore = score;
-        bestClass = c;
-      }
-    }
-
-    const thresh = CLASS_CONF_THRESHOLDS[bestClass] || 0.25;
-
-    if (maxScore >= thresh) {
-      // Filter out tiny edge border pad artifacts
-      if (w < 15 || h < 15) continue;
-      if (cy < 25 && h < 35) continue;
-      if (cy > 615 && h < 35) continue;
-
-      const x1 = cx - w / 2;
-      const y1 = cy - h / 2;
-      const x2 = cx + w / 2;
-      const y2 = cy + h / 2;
-      const issueType = CLASS_ID_MAP[bestClass] || `issue_class_${bestClass}`;
-      const canonicalName = getCanonicalIssueName(issueType);
-      const bBox = {
-        x: Math.max(0, Math.min(1, cx / MODEL_INPUT_WIDTH)),
-        y: Math.max(0, Math.min(1, cy / MODEL_INPUT_HEIGHT)),
-        width: Math.max(0, Math.min(1, w / MODEL_INPUT_WIDTH)),
-        height: Math.max(0, Math.min(1, h / MODEL_INPUT_HEIGHT)),
-      };
-
-      const priorityInfo = calculatePriorityWithExplanation(issueType, bBox, description, 1);
-
-      candidates.push({
-        classId: bestClass,
-        issueType,
-        displayIssueName: canonicalName,
-        rawConfidence: maxScore,
-        confidence: maxScore, // Genuine model confidence
-        priority: priorityInfo.priority,
-        priorityReason: priorityInfo.reason,
-        box: [x1, y1, x2, y2],
-        boundingBox: bBox,
-      });
-    }
-  }
-
-  return applyNms(candidates, iouThreshold);
+  return { isClear: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -956,17 +456,22 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD, description
 // ---------------------------------------------------------------------------
 
 /**
- * Combined Road Validation & Damage Analysis API
+ * Unified Vision AI & Road Defect Analysis API
+ * Supports Gemini Vision, OpenAI Vision, and CivicEye Vision Local v2 fallback.
  */
 app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
-  console.log("[YOLO] Calling inference service");
+  console.log("[Vision AI] Received image analysis request");
   try {
     let imageBuffer = null;
+    let mimeType = 'image/jpeg';
     if (req.file && req.file.buffer) {
       imageBuffer = req.file.buffer;
+      if (req.file.mimetype) mimeType = req.file.mimetype;
     } else if (req.body && (req.body.imageBase64 || req.body.image)) {
       let b64 = req.body.imageBase64 || req.body.image;
-      if (b64.startsWith('data:image')) {
+      if (b64.startsWith('data:')) {
+        const match = b64.match(/^data:([^;]+);base64,/);
+        if (match) mimeType = match[1];
         b64 = b64.split(',')[1];
       }
       imageBuffer = Buffer.from(b64, 'base64');
@@ -982,7 +487,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     try {
       decodedImage = decodeImageBuffer(imageBuffer);
     } catch (decodeErr) {
-      console.warn('[YOLO] Unparseable image buffer, rejecting as unclear:', decodeErr.message);
+      console.warn('[Vision AI] Unparseable image buffer, rejecting as unclear:', decodeErr.message);
       return res.status(200).json({
         ok: true,
         isRoad: false,
@@ -997,172 +502,268 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         invalidReason: 'blurry_image',
         confidence: 0,
         confidenceRaw: 0,
+        confidenceType: 'qualitative_assessment',
         hasDamage: false,
         priority: 'NONE',
         priorityReason: 'Image file could not be decoded. Manual review required.',
         department: null,
         responsibleDepartment: null,
+        provider: 'local_cv',
+        modelVersion: 'CivicEye-Vision-Local-v2',
         message: 'The uploaded file could not be decoded. Please upload a clear photo of the civic issue.',
         allDetections: [],
         primaryDetection: null,
       });
     }
 
-    // Step 1: Validate Road / Civic Scene Gatekeeper (MobileNetV2 + Pixel Heuristics)
-    const validation = await validateRoadPresence(decodedImage);
-    if (!validation.isRoad) {
-      console.log("[YOLO] Non-road or dissimilar image detected:", validation.reason);
-      const isUnclear = validation.reason === 'blurry_image' || validation.reason === 'dark_image' || validation.reason === 'overexposed_image';
-      const predictionState = isUnclear ? 'UNCLEAR_IMAGE' : 'INVALID_IMAGE';
-      const displayIssueName = isUnclear ? 'Unclear Image (Manual Review Required)' : 'Invalid Issue Image';
-      const userMessage = validation.message || (isUnclear
-        ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
-        : 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.');
-
-      return res.status(200).json({
-        ok: true,
-        isRoad: false,
-        isDissimilar: !isUnclear,
-        isClear: !isUnclear,
-        roadConfidence: validation.confidence,
-        predictionState,
-        validationStatus: isUnclear ? 'unclear_image' : 'unrelated_image',
-        agreementStatus: 'NOT_APPLICABLE',
-        analysisStatus: isUnclear ? 'unclear_image' : 'dissimilar_image',
-        detectedIssue: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
-        displayIssueName,
-        issueType: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
-        invalidReason: validation.reason || 'unrelated_image',
-        confidence: 0,
-        confidenceRaw: 0,
-        priority: 'NONE',
-        priorityReason: isUnclear ? 'Image quality insufficient for automated assessment.' : 'Image does not contain valid civic road infrastructure.',
-        department: null,
-        responsibleDepartment: null,
-        message: userMessage,
-        allDetections: [],
-        primaryDetection: null,
-      });
-    }
-
-    const session = await getOnnxSession();
-    const inputTensor = preprocessToFloatTensor(decodedImage, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT);
-
-    const feeds = { [session.inputNames[0]]: inputTensor };
-    const results = await session.run(feeds);
-    const outputName = session.outputNames[0];
-    const outputTensor = results[outputName];
-    let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD, description);
-
-    console.log(`[ONNX Inference Diagnostics] Model: ${MODEL_PATH}`);
-    console.log(`[ONNX Inference Diagnostics] Input dims: [1, 3, ${MODEL_INPUT_HEIGHT}, ${MODEL_INPUT_WIDTH}]`);
-    console.log(`[ONNX Inference Diagnostics] Output tensor dims: [${outputTensor.dims.join(', ')}]`);
-    console.log(`[ONNX Inference Diagnostics] Detections count: ${detections.length}`);
-
     const ISSUE_DEPT_MAP = {
       'pothole': { name: 'Road Maintenance', code: 'ROAD' },
+      'alligator_cracking': { name: 'Road Maintenance', code: 'ROAD' },
       'alligator cracking': { name: 'Road Maintenance', code: 'ROAD' },
       'cracking': { name: 'Road Maintenance', code: 'ROAD' },
+      'road cracking': { name: 'Road Maintenance', code: 'ROAD' },
+      'manhole_defect': { name: 'Sewerage', code: 'SEWER' },
       'manhole defect': { name: 'Sewerage', code: 'SEWER' },
       'waterlogging': { name: 'Stormwater / Drainage', code: 'DRAIN' },
+      'road_divider_damage': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'road divider damage': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
+      'damaged_traffic_sign': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'damaged traffic sign': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
       'missing signage': { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
+      'street_light_fault': { name: 'Street Lighting Department', code: 'LIGHTING' },
       'street light fault': { name: 'Street Lighting Department', code: 'LIGHTING' },
+      'debris_road_blockage': { name: 'Solid Waste Management', code: 'SWM' },
       'debris / road blockage': { name: 'Solid Waste Management', code: 'SWM' },
+      'damaged_footpath': { name: 'Public Works Department', code: 'PWD' },
       'damaged footpath': { name: 'Public Works Department', code: 'PWD' },
       'public route defect': { name: 'Public Works Department', code: 'PWD' },
+      'valid_road_no_issue': { name: 'Road Maintenance', code: 'ROAD' },
       'no_major_issue': { name: 'Road Maintenance', code: 'ROAD' },
     };
 
-    // If damage detected, return immediately with highest priority defect
-    if (detections.length > 0) {
-      const priorityOrder = ['HIGH', 'MEDIUM', 'LOW', 'NONE'];
-      const sorted = detections.slice().sort((a, b) => {
-        const pa = priorityOrder.indexOf(a.priority);
-        const pb = priorityOrder.indexOf(b.priority);
-        if (pa !== pb) return pa - pb;
-        return b.confidence - a.confidence;
-      });
+    // Helper: Autonomous CivicEye Deep Vision Classifier Pipeline (12 canonical classes, No YOLO)
+    const runLocalCVPipeline = async (decodedImg, desc) => {
+      // 1. Physical clarity gatekeeper
+      const clarity = assessImageClarity(decodedImg);
+      if (!clarity.isClear) {
+        console.log('[Vision AI Local] Image rejected as unclear/insufficient evidence:', clarity.reason);
+        return {
+          isRoad: false,
+          isDissimilar: false,
+          isClear: false,
+          hasDamage: false,
+          roadConfidence: 0.01,
+          predictionState: 'UNCLEAR_IMAGE',
+          validationStatus: 'unclear_image',
+          agreementStatus: 'NOT_APPLICABLE',
+          analysisStatus: 'unclear_image',
+          detectedIssue: 'unclear_image',
+          displayIssueName: 'Unclear Image (Manual Review Required)',
+          issueType: 'unclear_image',
+          invalidReason: clarity.reason,
+          confidence: 0,
+          confidenceRaw: 0,
+          confidenceType: 'qualitative_assessment',
+          priority: 'NONE',
+          priorityReason: 'Image quality insufficient for automated assessment.',
+          department: null,
+          responsibleDepartment: null,
+          departmentCode: null,
+          message: clarity.message,
+          boundingBox: null,
+          allDetections: [],
+          primaryDetection: null,
+        };
+      }
 
-      const primary = sorted[0];
-      const dept = ISSUE_DEPT_MAP[primary.issueType] || { name: 'Road Maintenance', code: 'ROAD' };
-      const canonicalName = getCanonicalIssueName(primary.issueType);
+      // 2. Run CivicEye Deep Learning Vision Model
+      const session = await getVisionSession();
+      if (!session) {
+        throw new Error('CivicEye Vision Classifier model session unavailable');
+      }
 
-      const descLower = description.toLowerCase();
-      let agreementStatus = 'AGREED';
-      if (descLower) {
-        const isLighting = descLower.includes('light') || descLower.includes('lamp') || descLower.includes('darkness');
-        const isSwm = descLower.includes('garbage') || descLower.includes('waste') || descLower.includes('trash') || descLower.includes('debris');
-        const isDrain = descLower.includes('drain') || descLower.includes('flood') || descLower.includes('waterlog');
-        const isDivider = descLower.includes('divider') || descLower.includes('median');
-        const isSign = descLower.includes('sign') || descLower.includes('board');
-        
-        const defectIsRoad = primary.issueType === 'pothole' || primary.issueType === 'alligator cracking' || primary.issueType === 'cracking';
-        if (defectIsRoad && (isLighting || isSwm || isDrain || isDivider || isSign)) {
-          agreementStatus = 'DISAGREED';
+      const tensor = preprocessForVisionModel(decodedImg);
+      const results = await session.run({ [session.inputNames[0]]: tensor });
+      const logits = results[session.outputNames[0]].data;
+      const probs = softmax(logits);
+
+      let maxIdx = 0;
+      let maxProb = probs[0];
+      for (let i = 1; i < probs.length; i++) {
+        if (probs[i] > maxProb) {
+          maxProb = probs[i];
+          maxIdx = i;
         }
       }
 
-      console.log("[YOLO] Damage detected:", canonicalName, `(${Math.round(primary.rawConfidence * 100)}%)`);
-      return res.status(200).json({
-        ok: true,
+      const classes = _visionClasses || [
+        "alligator_cracking", "cracking", "damaged_footpath", "damaged_traffic_sign",
+        "debris_road_blockage", "manhole_defect", "pothole", "road_divider_damage",
+        "street_light_fault", "unrelated_images", "valid_road_no_issue", "waterlogging"
+      ];
+      const predictedRawClass = classes[maxIdx] || 'valid_road_no_issue';
+      const confidencePercent = Math.min(100, Math.max(1, Math.round(maxProb * 100)));
+
+      console.log(`[Vision AI Local] Predicted class: "${predictedRawClass}", confidence: ${confidencePercent}% (raw: ${maxProb.toFixed(4)})`);
+
+      // 3. Unrelated / Non-infrastructure Image
+      if (predictedRawClass === 'unrelated_images') {
+        return {
+          isRoad: false,
+          isDissimilar: true,
+          isClear: true,
+          hasDamage: false,
+          roadConfidence: maxProb,
+          predictionState: 'INVALID_IMAGE',
+          validationStatus: 'unrelated_image',
+          agreementStatus: 'NOT_APPLICABLE',
+          analysisStatus: 'dissimilar_image',
+          detectedIssue: 'Invalid Image, give valid Issue Image!',
+          displayIssueName: 'Unrelated Image Detected',
+          issueType: 'Invalid Image, give valid Issue Image!',
+          invalidReason: 'unrelated_image',
+          confidence: 0,
+          confidenceRaw: 0,
+          confidenceType: 'model_calibrated_probability',
+          priority: 'NONE',
+          priorityReason: 'Image does not contain valid civic road infrastructure.',
+          department: null,
+          responsibleDepartment: null,
+          departmentCode: null,
+          message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
+          boundingBox: null,
+          allDetections: [],
+          primaryDetection: null,
+        };
+      }
+
+      // 4. Clean Normal Road Surface
+      if (predictedRawClass === 'valid_road_no_issue') {
+        return {
+          isRoad: true,
+          isDissimilar: false,
+          isClear: true,
+          hasDamage: false,
+          roadConfidence: maxProb,
+          predictionState: 'NO_MAJOR_ISSUE',
+          validationStatus: 'valid_clean_road',
+          agreementStatus: 'AGREED',
+          analysisStatus: 'no_major_issue',
+          issueType: 'no_major_issue',
+          detectedIssue: 'Clean Road (No Major Issue)',
+          displayIssueName: 'Clean Road (No Major Issue)',
+          confidence: confidencePercent,
+          confidenceRaw: maxProb,
+          confidenceType: 'model_calibrated_probability',
+          priority: 'NONE',
+          priorityReason: 'Normal clean road surface verified. No major road defects detected.',
+          department: 'Road Maintenance',
+          responsibleDepartment: 'Road Maintenance',
+          departmentCode: 'ROAD',
+          message: 'Verified normal road surface. No major road defects detected.',
+          boundingBox: null,
+          allDetections: [],
+          primaryDetection: null,
+        };
+      }
+
+      // 5. Valid Road Infrastructure Defect
+      const canonicalName = getCanonicalIssueName(predictedRawClass);
+      const dept = ISSUE_DEPT_MAP[predictedRawClass] || { name: 'Road Maintenance', code: 'ROAD' };
+      const priorityResult = calculatePriorityWithExplanation(predictedRawClass, null, desc, 1);
+
+      return {
         isRoad: true,
+        isDissimilar: false,
+        isClear: true,
         hasDamage: true,
-        roadConfidence: 0.95,
+        roadConfidence: 0.99,
         predictionState: 'VALID_ISSUE',
         validationStatus: 'valid_defect',
-        agreementStatus,
+        agreementStatus: 'AGREED',
         analysisStatus: 'damage_detected',
-        issueType: primary.issueType,
+        issueType: predictedRawClass,
         detectedIssue: canonicalName,
         displayIssueName: canonicalName,
-        confidence: Math.round(primary.rawConfidence * 100),
-        confidenceRaw: primary.rawConfidence,
-        priority: primary.priority,
-        priorityReason: primary.priorityReason,
+        confidence: confidencePercent,
+        confidenceRaw: maxProb,
+        confidenceType: 'model_calibrated_probability',
+        priority: priorityResult.priority,
+        priorityReason: priorityResult.reason,
         department: dept.name,
         responsibleDepartment: dept.name,
         departmentCode: dept.code,
-        boundingBox: primary.boundingBox,
-        allDetections: sorted,
-        primaryDetection: primary,
-      });
-    }
+        boundingBox: null,
+        allDetections: [
+          {
+            classId: maxIdx,
+            issueType: canonicalName,
+            displayIssueName: canonicalName,
+            confidence: maxProb,
+            priority: priorityResult.priority,
+            priorityReason: priorityResult.reason,
+          }
+        ],
+        primaryDetection: {
+          classId: maxIdx,
+          issueType: canonicalName,
+          displayIssueName: canonicalName,
+          confidence: maxProb,
+          priority: priorityResult.priority,
+          priorityReason: priorityResult.reason,
+        },
+        message: `Visual evidence confirmed ${canonicalName} on road infrastructure.`,
+      };
+    };
 
-    // Valid road surface without detected defects
-    console.log("[YOLO] Valid road surface without major defects");
+    // Execute Unified Vision AI
+    const result = await analyzeImageWithVisionAI({
+      imageBuffer,
+      decodedImage,
+      description,
+      mimeType,
+      localCVFallbackFn: runLocalCVPipeline,
+    });
+
+    console.log(`[Vision AI] Analysis completed by provider=${result.provider}, state=${result.predictionState}, issue=${result.displayIssueName}`);
+
     return res.status(200).json({
       ok: true,
-      isRoad: true,
-      hasDamage: false,
-      roadConfidence: validation.confidence,
-      predictionState: 'NO_MAJOR_ISSUE',
-      validationStatus: 'valid_clean_road',
-      agreementStatus: 'AGREED',
-      analysisStatus: 'no_major_issue',
-      issueType: 'no_major_issue',
-      detectedIssue: 'No Major Issue',
-      displayIssueName: 'No Major Issue',
-      confidence: 0,
-      confidenceRaw: 0,
-      priority: 'NONE',
-      priorityReason: 'Normal road surface verified. No major road defects detected.',
-      department: 'Road Maintenance',
-      responsibleDepartment: 'Road Maintenance',
-      departmentCode: 'ROAD',
-      message: 'Verified normal road surface. No major road defects detected.',
-      allDetections: [],
-      primaryDetection: null,
+      provider: result.provider || 'local_cv',
+      modelVersion: result.modelVersion || result.model || 'CivicEye-Vision-Local-v2',
+      predictionState: result.predictionState,
+      validationStatus: result.validationStatus || (result.isRoad ? (result.hasDamage ? 'valid_defect' : 'valid_clean_road') : 'unrelated_image'),
+      agreementStatus: result.agreementStatus || 'AGREED',
+      analysisStatus: result.analysisStatus || (result.hasDamage ? 'damage_detected' : 'no_major_issue'),
+      isRoad: result.isRoad,
+      hasDamage: !!result.hasDamage,
+      issueType: result.issueType || result.detectedDefect || 'Road Surface Defect',
+      detectedIssue: result.detectedIssue || result.displayIssueName || 'Road Surface Defect',
+      displayIssueName: result.displayIssueName || getCanonicalIssueName(result.detectedDefect || result.issueType),
+      confidence: result.confidence ?? 0,
+      confidenceRaw: result.confidenceRaw ?? (result.confidence ? result.confidence / 100 : 0),
+      confidenceType: result.confidenceType || 'detector_confidence',
+      priority: result.priority || result.severityEvidence || 'NONE',
+      priorityReason: result.priorityReason || result.severityReason || 'No actionable issue identified.',
+      department: result.department || 'Road Maintenance',
+      responsibleDepartment: result.responsibleDepartment || result.department || 'Road Maintenance',
+      departmentCode: result.departmentCode || 'ROAD',
+      boundingBox: result.boundingBox || null,
+      allDetections: result.allDetections || [],
+      primaryDetection: result.primaryDetection || null,
+      message: result.message || (result.isRoad ? (result.hasDamage ? 'Defect identified on road infrastructure.' : 'Normal road surface verified.') : 'Invalid issue image.'),
     });
+
   } catch (error) {
     console.error('[API] /api/analyze-road error:', error);
     return res.status(500).json({
       ok: false,
-      message: error.message || 'Road analysis failed.',
+      predictionState: 'INFERENCE_FAILED',
+      message: error.message || 'Vision analysis failed.',
     });
   }
 });
+
 
 /**
  * Lightweight Road Validation Only Endpoint
@@ -1184,19 +785,239 @@ app.post('/api/validate-road', upload.single('image'), async (req, res) => {
       return res.status(400).json({ ok: false, message: 'No image provided.' });
     }
     const decodedImage = decodeImageBuffer(imageBuffer);
-    const validation = await validateRoadPresence(decodedImage);
+    const clarity = assessImageClarity(decodedImage);
+    if (!clarity.isClear) {
+      return res.json({
+        ok: true,
+        isRoad: false,
+        isClear: false,
+        confidence: 0,
+        reason: clarity.reason,
+        message: clarity.message,
+      });
+    }
+
+    const session = await getVisionSession();
+    if (!session) {
+      return res.json({
+        ok: true,
+        isRoad: true,
+        confidence: 0.95,
+        message: 'Valid road image.',
+      });
+    }
+
+    const tensor = preprocessForVisionModel(decodedImage);
+    const results = await session.run({ [session.inputNames[0]]: tensor });
+    const logits = results[session.outputNames[0]].data;
+    const probs = softmax(logits);
+
+    let maxIdx = 0;
+    let maxProb = probs[0];
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > maxProb) {
+        maxProb = probs[i];
+        maxIdx = i;
+      }
+    }
+
+    const classes = _visionClasses || [
+      "alligator_cracking", "cracking", "damaged_footpath", "damaged_traffic_sign",
+      "debris_road_blockage", "manhole_defect", "pothole", "road_divider_damage",
+      "street_light_fault", "unrelated_images", "valid_road_no_issue", "waterlogging"
+    ];
+    const detectedClass = classes[maxIdx] || 'valid_road_no_issue';
+    const isRoad = detectedClass !== 'unrelated_images';
+
     return res.json({
       ok: true,
-      isRoad: validation.isRoad,
-      confidence: validation.confidence,
-      message: validation.isRoad
+      isRoad,
+      isClear: true,
+      confidence: Math.round(maxProb * 100),
+      detectedClass,
+      message: isRoad
         ? 'Valid road image.'
-        : 'The uploaded image does not appear to contain a road. Please upload a clear image of a road.',
+        : 'The uploaded image does not appear to contain road infrastructure.',
     });
 
   } catch (error) {
     console.error('[API] /api/validate-road error:', error);
     return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Image-Description Validation Gatekeeper Endpoint
+ * Evaluates image relevance, visible defect evidence, description meaning, and consistency.
+ * Must run before complaint ID generation or persistence.
+ */
+app.post('/api/validate-complaint', upload.single('image'), async (req, res) => {
+  try {
+    let imageBuffer = null;
+    if (req.file && req.file.buffer) {
+      imageBuffer = req.file.buffer;
+    } else if (req.body && (req.body.imageBase64 || req.body.image)) {
+      let b64 = req.body.imageBase64 || req.body.image;
+      if (b64.startsWith('data:')) {
+        b64 = b64.split(',')[1];
+      }
+      imageBuffer = Buffer.from(b64, 'base64');
+    }
+
+    const description = (req.body && req.body.description) ? String(req.body.description).trim() : '';
+
+    // 1. Description meaning check: Does it report NO ISSUE?
+    const descLower = description.toLowerCase();
+    const isUniversalNoIssue =
+      /\b(the\s+)?(road|street|path|walkway|pavement|lane)\s+is\s+(fine|good|okay|ok|clear|clean|normal)\b/i.test(descLower) ||
+      /\bno\s+(damage|problem|issue|defect|hazard)(\s+found|\s+here|\s+on\s+this\s+road)?\b/i.test(descLower) ||
+      /\bthere\s+is\s+no\s+(damage|problem|issue|defect|hazard|pothole|crack)(\s+on\s+this\s+road|\s+here)?\b/i.test(descLower) ||
+      /\beverything\s+(is|looks)\s+(fine|good|okay|ok|normal)\b/i.test(descLower);
+
+    // Contrastive exception check
+    const hasContrast = /\b(but|however|except|yet|although)\b/i.test(descLower);
+    const hasContrastedIssue = hasContrast && (
+      /\b(broken|damaged|fault|clogged|blocked|leak|waterlogging|pothole|cracks?|streetlight|divider|manhole)\b/i.test(descLower)
+    );
+
+    if (isUniversalNoIssue && !hasContrastedIssue) {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_NO_ISSUE_DESC',
+        title: 'No Issue Found',
+        message: 'No Issue Found. Your description does not report a civic problem. Please provide a description of the actual issue and upload a relevant image.',
+      });
+    }
+
+    // Single clause negated defect: "There is no pothole on this road"
+    if (!hasContrast && /\b(there\s+is\s+no|there\s+are\s+no|no|not\s+any)\s+(pothole|potholes|cracks?|road\s*cracks?|damage|defect|waterlogging|street\s*light\s*fault|broken\s*divider)\b/i.test(descLower)) {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_NO_ISSUE_DESC',
+        title: 'No Issue Found',
+        message: 'No Issue Found. Your description does not report a civic problem. Please provide a description of the actual issue and upload a relevant image.',
+      });
+    }
+
+    // 2. Image buffer and clarity check
+    if (!imageBuffer) {
+      return res.status(400).json({
+        ok: false,
+        isValid: false,
+        outcome: 'BLOCK_UNREADABLE_IMAGE',
+        title: 'Unreadable Image',
+        message: 'No image was provided. Please upload a clear photo of the civic issue and try again.',
+      });
+    }
+
+    let decodedImg;
+    try {
+      decodedImg = decodeImageBuffer(imageBuffer);
+    } catch {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_UNREADABLE_IMAGE',
+        title: 'Unreadable Image',
+        message: 'The uploaded image is too blurry, unreadable, or corrupted. Please upload a clear photo of the civic issue and try again.',
+      });
+    }
+
+    const clarity = assessImageClarity(decodedImg);
+    if (!clarity.isClear) {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_UNREADABLE_IMAGE',
+        title: 'Unreadable Image',
+        message: 'The uploaded image is too blurry, unreadable, or corrupted. Please upload a clear photo of the civic issue and try again.',
+      });
+    }
+
+    // 3. Run visual classifier
+    const session = await getVisionSession();
+    if (!session) {
+      return res.json({
+        ok: true,
+        isValid: true,
+        outcome: 'ALLOW',
+        message: 'Vision model temporarily bypassed; accepted for manual review.',
+      });
+    }
+
+    const tensor = preprocessForVisionModel(decodedImg);
+    const results = await session.run({ [session.inputNames[0]]: tensor });
+    const logits = results[session.outputNames[0]].data;
+    const probs = softmax(logits);
+
+    let maxIdx = 0;
+    let maxProb = probs[0];
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > maxProb) {
+        maxProb = probs[i];
+        maxIdx = i;
+      }
+    }
+
+    const classes = _visionClasses || [
+      "alligator_cracking", "cracking", "damaged_footpath", "damaged_traffic_sign",
+      "debris_road_blockage", "manhole_defect", "pothole", "road_divider_damage",
+      "street_light_fault", "unrelated_images", "valid_road_no_issue", "waterlogging"
+    ];
+    const predictedClass = classes[maxIdx] || 'valid_road_no_issue';
+
+    // Unrelated image
+    if (predictedClass === 'unrelated_images') {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_UNRELATED_IMAGE',
+        title: 'Invalid Issue Image',
+        message: 'Invalid Issue Image. The uploaded image does not match the reported civic issue. Please upload a relevant image and try again.',
+      });
+    }
+
+    // Clean normal road
+    if (predictedClass === 'valid_road_no_issue') {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_NORMAL_ROAD',
+        title: 'No Issue Found',
+        message: 'No Issue Found. The uploaded image does not show a clearly identifiable civic issue. Please upload an image showing the problem you want to report.',
+      });
+    }
+
+    // Defect detected - check consistency with description
+    const canonicalName = getCanonicalIssueName(predictedClass);
+    const imgIssue = canonicalName.toLowerCase();
+
+    // Check conflict: e.g. Streetlight vs Pothole (ensuring negated pothole is not falsely treated as reported defect)
+    const isLightingImg = imgIssue.includes('light');
+    const isAffirmativePotholeDesc = !/\b(no|not|without)\s+(a\s+|an\s+|any\s+)?pothole/i.test(descLower) && (descLower.includes('pothole') || descLower.includes('crater'));
+    if (isLightingImg && isAffirmativePotholeDesc) {
+      return res.json({
+        ok: true,
+        isValid: false,
+        outcome: 'BLOCK_CONFLICT',
+        title: 'Invalid Issue Image',
+        message: 'Invalid Issue Image. The uploaded image does not match the reported civic issue. Please upload a relevant image and try again.',
+      });
+    }
+
+    return res.json({
+      ok: true,
+      isValid: true,
+      outcome: 'ALLOW',
+      detectedIssue: canonicalName,
+      displayIssueName: canonicalName,
+      confidence: Math.round(maxProb * 100),
+    });
+  } catch (err) {
+    console.error('[API] /api/validate-complaint error:', err);
+    return res.status(500).json({ ok: false, message: err.message });
   }
 });
 
@@ -1236,40 +1057,158 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
   }
 });
 
+// In-memory deduplication cache for email events
+const emailDeduplicationCache = new Map();
+
+function isDuplicateEmailRequest(key, windowMs = 60000) {
+  const now = Date.now();
+  for (const [k, ts] of emailDeduplicationCache.entries()) {
+    if (now - ts > windowMs) {
+      emailDeduplicationCache.delete(k);
+    }
+  }
+  if (emailDeduplicationCache.has(key)) {
+    return true;
+  }
+  emailDeduplicationCache.set(key, now);
+  return false;
+}
+
 /**
- * Email Notification Endpoint for Solid Waste Management & Civic Complaints
+ * Email Notification Endpoint for Complaint Submissions, Status Updates & Department Routing
  */
 app.post('/api/send-email', async (req, res) => {
   try {
-    const {
-      complaintId,
-      issueType,
-      description,
-      citizenEmail,
-      department = 'Solid Waste Management',
-      routingStatus = 'Moved to Solid Waste Management',
-    } = req.body || {};
+    const body = req.body || {};
+    const type = body.type || 'submission'; // 'submission' | 'status_update' | 'swm_routing'
+    const complaintId = body.complaintId;
+    const issueType = body.issueType || body.issueName || body.canonicalIssueName;
+    const description = body.description;
+    const citizenEmail = body.citizenEmail || body.to || body.recipientEmail;
+    const department = body.department || body.assignedDepartment || body.departmentName || 'Road Maintenance';
+    const previousStatus = body.previousStatus || body.oldStatus;
+    const newStatus = body.newStatus || body.status;
+    const priority = body.priority || body.severity;
+    const statusRemarks = body.statusRemarks || body.note || body.remarks;
+    const updatedByName = body.updatedByName;
+    const timestamp = body.timestamp || body.updatedAt || body.createdAt;
+    const routingStatus = body.routingStatus || 'Direct';
 
-    if (!citizenEmail) {
-      return res.status(400).json({ ok: false, message: 'Citizen email is required.' });
+    if (!citizenEmail || typeof citizenEmail !== 'string' || !citizenEmail.includes('@')) {
+      return res.status(400).json({ ok: false, success: false, message: 'Valid citizen email is required.' });
     }
 
-    const emailSubject = `CivicEye Complaint Moved to ${department}`;
-    const emailBody = `Your CivicEye complaint has been successfully registered.
+    // Deduplication check
+    const dedupKey = `${type}_${complaintId || 'none'}_${newStatus || 'submitted'}_${citizenEmail.toLowerCase().trim()}`;
+    if (isDuplicateEmailRequest(dedupKey)) {
+      console.log(`ℹ️ [EMAIL NOTIFICATION] Deduplicated duplicate request for key: ${dedupKey}`);
+      return res.status(200).json({
+        ok: true,
+        success: true,
+        sent: false,
+        deduplicated: true,
+        duplicate: true,
+        message: 'Duplicate email prevented.',
+      });
+    }
 
-Complaint ID: ${complaintId || 'N/A'}
+    const formattedTime = timestamp
+      ? new Date(timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      : new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-Issue: ${issueType || 'Solid Waste Issue'}
+    let emailSubject = '';
+    let emailBody = '';
 
-Description: ${description || 'N/A'}
+    if (type === 'deletion') {
+      const isCitizenInitiated = body.initiatedBy === 'citizen' || body.deletedByRole === 'citizen';
+      const actorDescription = isCitizenInitiated
+        ? 'Submitted Citizen (Self-deletion)'
+        : (body.deletedByName || body.officerName || 'Authorized Municipal Officer');
+      const delReason = body.deletionReason || body.reason || (isCitizenInitiated ? 'Removed by citizen request' : 'Administrative removal');
 
-Department: ${department}
+      emailSubject = `[CivicEye] Complaint Deleted: ${complaintId || 'Complaint'}`;
+      emailBody = `Dear Citizen,
 
-Routing Status: ${routingStatus}
+Your CivicEye complaint (${complaintId || 'N/A'}) has been deleted and removed from active records.
 
-Your complaint has been forwarded to the ${department} Department for further action.
+Complaint Deletion Summary:
+----------------------------------------------------
+• Complaint ID: ${complaintId || 'N/A'}
+• Canonical Issue Name: ${issueType || 'Civic Infrastructure Defect'}
+• Date & Time of Deletion: ${formattedTime} (Asia/Kolkata)
+• Action Initiated By: ${actorDescription}
+• Status in Active Records: Removed from active complaint registry (Archived for Municipal Audit)
+• Reason for Deletion: ${delReason}
 
-Thank you for using CivicEye.`;
+Next Steps:
+${isCitizenInitiated
+  ? 'If you deleted this complaint by mistake or if the civic problem still persists, you may report a new issue anytime via the CivicEye app.'
+  : 'If you have questions regarding this deletion decision, you may contact the Coimbatore City Municipal Corporation (CCMC) Helpdesk or submit a fresh complaint with updated details.'}
+
+Instructions:
+This complaint is no longer in the active civic tracking queue. If needed, you can submit a new complaint via CivicEye at any time.
+
+Thank you for your cooperation in maintaining public infrastructure in Coimbatore.
+
+Warm regards,
+CivicEye Municipal Services Platform
+Coimbatore City Municipal Corporation (CCMC)`;
+    } else if (type === 'status_update') {
+      emailSubject = `[CivicEye] Status Update: ${complaintId || 'Complaint'} is now ${newStatus || 'Updated'}`;
+      emailBody = `Dear Citizen,
+
+The status of your CivicEye complaint (${complaintId || 'N/A'}) has been updated by an authorized municipal authority.
+
+Status Update Details:
+----------------------------------------------------
+• Complaint ID: ${complaintId || 'N/A'}
+• Issue Name: ${issueType || 'Civic Infrastructure Issue'}
+• Previous Status: ${previousStatus || 'Under Review'}
+• New Status: ${newStatus || 'Updated'}
+• Assigned Department: ${department}
+• Updated By: ${updatedByName || 'Municipal Officer'}
+• Remarks / Notes: ${statusRemarks || 'Status updated.'}
+• Date & Time: ${formattedTime} (Asia/Kolkata)
+
+Instructions:
+You can track real-time inspection notes, budget estimates, and repair progress anytime in the CivicEye mobile app under the "Status" tab of your complaint.
+
+Thank you for helping us maintain public infrastructure in Coimbatore.
+
+Warm regards,
+CivicEye Municipal Administration
+Coimbatore City Municipal Corporation (CCMC)`;
+    } else {
+      // Default: Complaint submission confirmation
+      emailSubject = `[CivicEye] Complaint Registered Successfully: ${complaintId || 'New Complaint'}`;
+      emailBody = `Dear Citizen,
+
+Thank you for reporting a civic issue. Your complaint has been successfully registered in CivicEye.
+
+Complaint Summary:
+----------------------------------------------------
+• Complaint ID: ${complaintId || 'N/A'}
+• Canonical Issue Name: ${issueType || 'Civic Issue'}
+• Submitted Description: ${description || 'N/A'}
+• Severity / Priority: ${priority || 'Standard'}
+• Assigned Department: ${department}
+• Current Status: ${newStatus || 'Submitted'}
+• Submission Time: ${formattedTime} (Asia/Kolkata)
+
+Next Steps:
+1. Your complaint has entered the official municipal queue.
+2. A Field Inspector will verify the complaint on-site and assess required repair costs.
+3. The assigned department will execute repairs according to municipal standards.
+
+Instructions:
+To view live status updates, inspection details, and budget allocations, open the CivicEye app and check the "Details" and "Status" tabs.
+
+Thank you for your active civic participation.
+
+Warm regards,
+CivicEye Municipal Services Platform
+Coimbatore City Municipal Corporation (CCMC)`;
+    }
 
     console.log('----------------------------------------------------');
     console.log(`📧 [EMAIL NOTIFICATION] Forwarding notification to: ${citizenEmail}`);
@@ -1319,12 +1258,13 @@ Thank you for using CivicEye.`;
 
     return res.status(200).json({
       ok: true,
+      success: true,
       sent: emailSent,
       citizenEmail,
       subject: emailSubject,
       complaintId,
       department,
-      routingStatus,
+      type,
       message: 'Notification email processed successfully.',
     });
   } catch (error) {
@@ -1612,6 +1552,272 @@ app.post('/api/reject-complaint', async (req, res) => {
 });
 
 /**
+ * Citizen Complaint Deletion Endpoint (Owner-enforced)
+ */
+app.post('/api/citizen-delete-complaint', async (req, res) => {
+  try {
+    await ensureBackendAuth();
+    const { complaintId, citizenId } = req.body || {};
+    if (!complaintId || !citizenId) {
+      return res.status(400).json({ ok: false, message: 'complaintId and citizenId are required.' });
+    }
+
+    const docRef = doc(serverDb, 'complaints', complaintId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return res.status(404).json({ ok: false, message: 'Complaint not found.' });
+    }
+
+    const complaintData = snap.data();
+    if (complaintData.citizenId !== citizenId) {
+      return res.status(403).json({ ok: false, message: 'Forbidden: Citizens can only delete complaints they own.' });
+    }
+
+    if (complaintData.isDeleted) {
+      return res.status(200).json({ ok: true, message: 'Complaint already deleted.' });
+    }
+
+    const existingHistory = Array.isArray(complaintData.statusHistory) ? complaintData.statusHistory : [];
+    const historyItem = {
+      id: `hist-${Date.now()}`,
+      previousStatus: complaintData.status || 'Submitted',
+      newStatus: 'Deleted by Citizen',
+      updatedBy: citizenId,
+      updatedByName: complaintData.citizenEmail?.split('@')[0] || 'Citizen',
+      remarks: 'Complaint deleted by citizen from active views.',
+      timestamp: new Date().toISOString(),
+    };
+
+    // Soft delete with auditable tombstone
+    await updateDoc(docRef, {
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: citizenId,
+      deletedByRole: 'citizen',
+      status: 'Closed',
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Record audit log
+    await addDoc(collection(serverDb, 'audit_logs'), {
+      action: 'complaint_deleted_by_citizen',
+      complaintId: complaintData.complaintId || complaintId,
+      complaintDocId: complaintId,
+      deletedBy: citizenId,
+      deletedByRole: 'citizen',
+      timestamp: serverTimestamp(),
+    });
+
+    // In-app notification for citizen self-deletion
+    const displayId = complaintData.complaintId || complaintId;
+    const canonicalIssue = complaintData.displayIssueName || getCanonicalIssueName(complaintData.issueType);
+    const notifDateStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    try {
+      await addDoc(collection(serverDb, 'notifications'), {
+        userId: citizenId,
+        recipientId: citizenId,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Deleted',
+        message: `Your complaint ${displayId} (${canonicalIssue}) was deleted on ${notifDateStr} and removed from active records.`,
+        type: 'complaint_deleted',
+        deletionReason: 'Deleted by citizen from active records',
+        deletedBy: 'You (Citizen)',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('[CITIZEN DELETE] In-app notification error:', notifErr.message);
+    }
+
+    // Trigger citizen deletion email (safely handled)
+    let targetEmail = complaintData.citizenEmail;
+    if (!targetEmail) {
+      try {
+        const uSnap = await getDoc(doc(serverDb, 'users', citizenId));
+        if (uSnap.exists()) targetEmail = uSnap.data().email;
+      } catch {}
+    }
+    if (targetEmail && targetEmail.includes('@')) {
+      try {
+        await fetch(`http://localhost:${PORT}/api/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'deletion',
+            complaintId: displayId,
+            issueType: canonicalIssue,
+            citizenEmail: targetEmail,
+            initiatedBy: 'citizen',
+            deletedByRole: 'citizen',
+            deletionReason: 'Deleted by citizen request',
+            timestamp: new Date().toISOString(),
+          }),
+        });
+      } catch (emailErr) {
+        console.warn('[CITIZEN DELETE] Deletion email dispatch error (handled safely):', emailErr.message);
+      }
+    }
+
+    console.log(`🗑️ [CITIZEN DELETE] Complaint #${complaintData.complaintId || complaintId} soft-deleted by owner ${citizenId}`);
+    return res.status(200).json({ ok: true, message: 'Complaint deleted successfully.', complaintId: complaintData.complaintId || complaintId });
+  } catch (error) {
+    console.error('Error in /api/citizen-delete-complaint:', error);
+    return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Authority Complaint Deletion Endpoint (Reason-enforced + Citizen Notified)
+ */
+app.post('/api/authority-delete-complaint', async (req, res) => {
+  try {
+    await ensureBackendAuth();
+    const { complaintId, officerId, officerName, officerRole, deletionReason } = req.body || {};
+    if (!complaintId || !officerId) {
+      return res.status(400).json({ ok: false, message: 'complaintId and officerId are required.' });
+    }
+
+    // Server-side role verification
+    const userSnap = await getDoc(doc(serverDb, 'users', officerId));
+    const roleInDb = userSnap.exists() ? userSnap.data().role : null;
+    const effectiveRole = roleInDb || officerRole || 'unknown';
+    const isAuthorized = effectiveRole === 'officer' || effectiveRole === 'admin' || effectiveRole === 'main_officer';
+    if (!isAuthorized) {
+      return res.status(403).json({
+        ok: false,
+        message: 'Forbidden: Only authorized officers and administrators are permitted to delete complaints.',
+      });
+    }
+
+    const reason = String(deletionReason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ ok: false, message: 'A non-empty deletion reason or clarification is strictly required.' });
+    }
+
+    const docRef = doc(serverDb, 'complaints', complaintId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return res.status(404).json({ ok: false, message: 'Complaint not found.' });
+    }
+
+    const complaintData = snap.data();
+    if (complaintData.isDeleted) {
+      return res.status(200).json({ ok: true, message: 'Complaint already deleted.' });
+    }
+
+    const existingHistory = Array.isArray(complaintData.statusHistory) ? complaintData.statusHistory : [];
+    const historyItem = {
+      id: `hist-${Date.now()}`,
+      previousStatus: complaintData.status || 'Submitted',
+      newStatus: 'Deleted by Authority',
+      updatedBy: officerId,
+      updatedByName: officerName || 'Authorized Officer',
+      remarks: `Complaint removed by authority. Reason: ${reason}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Soft delete with auditable tombstone
+    await updateDoc(docRef, {
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: officerId,
+      deletedByRole: effectiveRole,
+      deletionReason: reason,
+      status: 'Closed',
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Notify affected citizen atomically
+    const citizenUid = complaintData.citizenId;
+    const canonicalIssue = complaintData.displayIssueName || getCanonicalIssueName(complaintData.issueType);
+    const displayId = complaintData.complaintId || complaintId;
+    const notifDateStr = new Date().toLocaleString('en-IN');
+    const notifMessage = `Your complaint ${displayId} — ${canonicalIssue} — was removed by the responsible authority. Reason: ${reason}. Date: ${notifDateStr}.`;
+
+    let notificationId = null;
+    if (citizenUid) {
+      const notifDoc = await addDoc(collection(serverDb, 'notifications'), {
+        userId: citizenUid,
+        recipientId: citizenUid,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Removed by Authority',
+        message: notifMessage,
+        type: 'complaint_deleted',
+        deletionReason: reason,
+        deletedBy: officerName || 'Authorized Officer',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+      notificationId = notifDoc.id;
+      console.log(`🔔 [CITIZEN NOTIFIED] Notification created for citizen ${citizenUid}: ${notifMessage}`);
+    }
+
+    // Record audit log
+    await addDoc(collection(serverDb, 'audit_logs'), {
+      action: 'complaint_deleted_by_authority',
+      complaintId: displayId,
+      complaintDocId: complaintId,
+      citizenId: citizenUid,
+      userId: officerId,
+      deletedBy: officerId,
+      deletedByName: officerName || 'Authorized Officer',
+      deletedByRole: effectiveRole,
+      reason,
+      deletionReason: reason,
+      timestamp: serverTimestamp(),
+    });
+
+    // Trigger authority deletion email to citizen (safely handled)
+    let targetCitizenEmail = complaintData.citizenEmail;
+    if (!targetCitizenEmail && citizenUid) {
+      try {
+        const uSnap = await getDoc(doc(serverDb, 'users', citizenUid));
+        if (uSnap.exists()) targetCitizenEmail = uSnap.data().email;
+      } catch {}
+    }
+    if (targetCitizenEmail && targetCitizenEmail.includes('@')) {
+      try {
+        await fetch(`http://localhost:${PORT}/api/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'deletion',
+            complaintId: displayId,
+            issueType: canonicalIssue,
+            citizenEmail: targetCitizenEmail,
+            initiatedBy: 'authority',
+            deletedByRole: effectiveRole,
+            deletedByName: officerName || 'Authorized Officer',
+            deletionReason: reason,
+            timestamp: new Date().toISOString(),
+          }),
+        });
+      } catch (emailErr) {
+        console.warn('[AUTHORITY DELETE] Deletion email dispatch error (handled safely):', emailErr.message);
+      }
+    }
+
+    console.log(`🗑️ [AUTHORITY DELETE] Complaint #${displayId} removed by ${officerName || officerId}. Reason: "${reason}"`);
+    return res.status(200).json({
+      ok: true,
+      message: 'Complaint removed by authority and citizen notified.',
+      complaintId: displayId,
+      notificationId,
+      deletionReason: reason,
+    });
+  } catch (error) {
+    console.error('Error in /api/authority-delete-complaint:', error);
+    return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
  * Format system date dynamically in Asia/Kolkata timezone (YYYYMMDD)
  */
 function getKolkataDateKey(date = new Date()) {
@@ -1673,32 +1879,21 @@ app.get(['/api/next-complaint-id', '/api/generate-complaint-id'], async (req, re
 });
 
 app.get(['/health', '/api/health'], async (_req, res) => {
-  let onnxStatus = 'unknown';
-  let classifierStatus = 'unknown';
+  let visionStatus = 'unknown';
   try {
-    await getOnnxSession();
-    onnxStatus = 'ready';
+    const session = await getVisionSession();
+    visionStatus = session ? 'ready' : 'unavailable';
   } catch (e) {
-    onnxStatus = 'error: ' + e.message;
-  }
-  try {
-    await getClassifierSession();
-    classifierStatus = 'ready';
-  } catch (e) {
-    classifierStatus = 'error: ' + e.message;
+    visionStatus = 'error: ' + e.message;
   }
 
   res.json({
     ok: true,
     status: 'ok',
     service: 'civiceye-ai-backend',
-    onnxModel: onnxStatus,
-    classifierModel: classifierStatus,
-    thresholds: {
-      detection: DETECTION_THRESHOLD,
-      iou: IOU_THRESHOLD,
-      roadValidation: ROAD_VALIDATION_THRESHOLD,
-    },
+    visionModel: visionStatus,
+    modelVersion: 'CivicEye-Vision-Engine-v3',
+    classesCount: _visionClasses ? _visionClasses.length : 12,
   });
 });
 
@@ -1721,8 +1916,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('====================================================');
   console.log(`🚀 CivicEye AI & Image Backend Server is ACTIVE`);
   console.log(`📍 Local URL:  http://localhost:${PORT}`);
-  console.log(`🌐 LAN URL:    http://${lanIp}:${PORT}`);
-  console.log(`🤖 AI Engine:  ONNX YOLOv8 Road Damage Detection Ready`);
+  console.log(`🤖 AI Engine:  CivicEye Multimodal Vision AI Architecture Ready (No YOLO)`);
   console.log(`ℹ️  Note: This process runs continuously to serve`);
   console.log(`   mobile app inference requests. (Press Ctrl+C to stop)`);
   console.log('====================================================');

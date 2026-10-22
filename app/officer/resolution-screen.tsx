@@ -2,10 +2,11 @@ import { useLocalSearchParams, useRootNavigationState, useRouter } from 'expo-ro
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 
 export default function ResolutionScreenForwarder() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const rootNavigationState = useRootNavigationState();
   const { id } = useLocalSearchParams<{ id?: string }>();
 
@@ -32,15 +33,15 @@ export default function ResolutionScreenForwarder() {
   }, [id, rootNavigationState?.key, router]);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
+        <ActivityIndicator size="large" color={colors.buttonPrimary} />
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: AppColors.background },
+  safe: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });

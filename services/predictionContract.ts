@@ -2,7 +2,7 @@
  * CivicEye - Centralized Typed Prediction Contract
  *
  * Provides a single, consistent, typed prediction contract across:
- * - AI inference service (YOLOv8 & MobileNetV2)
+ * - Vision AI inference service (Multimodal Cloud & Semantic Computer Vision)
  * - Frontend report screen & Issue Summary UI
  * - Backend API routes
  * - Firestore database persistence
@@ -14,7 +14,8 @@ export type ValidationStatus =
   | 'unrelated_image'
   | 'unclear_image'
   | 'unsupported_issue'
-  | 'inference_error';
+  | 'inference_error'
+  | 'pending_review';
 
 export type PredictionState =
   | 'VALID_ISSUE'
@@ -22,7 +23,8 @@ export type PredictionState =
   | 'INVALID_IMAGE'
   | 'UNCLEAR_IMAGE'
   | 'UNSUPPORTED_ISSUE'
-  | 'INFERENCE_FAILED';
+  | 'INFERENCE_FAILED'
+  | 'PENDING_REVIEW';
 
 export type PredictionStatus =
   | 'idle'
@@ -30,7 +32,8 @@ export type PredictionStatus =
   | 'success'
   | 'failed'
   | 'rejected'
-  | 'unclear';
+  | 'unclear'
+  | 'pending_review';
 
 export type PredictionPriority = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 
@@ -50,6 +53,7 @@ export interface CivicPredictionContract {
   displayIssueName: string;
   confidence: number;      // 0-100 percentage
   confidenceRaw: number;   // 0-1 raw probability/score
+  confidenceType?: string; // Type/origin of confidence assessment
 
   // Validation & Lifecycle State
   validationStatus: ValidationStatus;
@@ -80,36 +84,45 @@ export interface CivicPredictionContract {
 
 /**
  * Normalizes any detected issue string into a clean, human-readable specific display name.
+ * Handles casing, underscores, hyphens, and whitespace consistently.
  * Never defaults to generic "Road Issue" when a specific defect is known.
  */
 export function formatDisplayIssueName(issueType?: string | null): string {
   if (!issueType) return 'Pending Verification';
-  const norm = issueType.trim().toLowerCase();
-  if (norm === 'no_major_issue' || norm === 'no supported issue detected' || norm === 'normal road surface (no major defect)') {
-    return 'Normal Road Surface (No Major Defect)';
+  // Normalize underscores and hyphens to spaces and trim
+  const clean = issueType.trim().replace(/[_\-]+/g, ' ');
+  const norm = clean.toLowerCase();
+
+  if (norm.includes('clean road') || norm === 'clean road (no major issue)') {
+    return 'Clean Road (No Major Issue)';
   }
-  if (norm === 'unclear_image' || norm === 'unclear') {
+  if (norm === 'no major issue' || norm === 'no issue' || norm === 'no supported issue detected' || norm === 'normal road surface (no major defect)' || norm === 'normal road') {
+    return 'No Major Issue';
+  }
+  if (norm === 'unclear image' || norm === 'unclear') {
     return 'Unclear Image (Manual Review Required)';
   }
   if (norm.includes('invalid') || norm.includes('dissimilar')) {
     return 'Invalid Issue Image';
   }
-  if (norm === 'pothole') return 'Pothole';
-  if (norm === 'alligator cracking') return 'Alligator Cracking';
-  if (norm === 'cracking' || norm === 'road surface cracking') return 'Road Cracking';
-  if (norm === 'road divider damage' || norm === 'broken divider') return 'Road Divider Damage';
-  if (norm === 'damaged traffic sign' || norm === 'missing signage') return 'Damaged Traffic Sign';
-  if (norm === 'street light fault' || norm === 'streetlight fault') return 'Streetlight Fault';
-  if (norm === 'waterlogging') return 'Waterlogging';
-  if (norm === 'drainage blockage' || norm === 'drainage problem') return 'Drainage Blockage';
-  if (norm === 'manhole defect' || norm === 'damaged manhole') return 'Damaged Manhole';
-  if (norm === 'damaged footpath' || norm === 'broken footpath') return 'Damaged Footpath';
-  if (norm === 'debris / road blockage' || norm === 'road debris / obstruction') return 'Road Debris / Obstruction';
+  if (norm.includes('alligator')) return 'Alligator Cracking';
+  if (norm === 'pothole' || norm.includes('pothole')) return 'Pothole';
+  if (norm === 'cracking' || norm.includes('road cracking') || norm.includes('surface cracking') || norm.includes('crack')) return 'Road Cracking';
+  if (norm.includes('divider') || norm.includes('median')) return 'Road Divider Damage';
+  if (norm.includes('traffic sign') || norm.includes('missing signage') || norm.includes('sign board')) return 'Damaged Traffic Sign';
+  if (norm.includes('street light') || norm.includes('streetlight') || norm.includes('lamp post')) return 'Streetlight Fault';
+  if (norm.includes('waterlogging') || norm.includes('water logging') || norm.includes('flood')) return 'Waterlogging';
+  if (norm.includes('drainage') || norm.includes('drain blockage') || norm.includes('gutter')) return 'Drainage Blockage';
+  if (norm.includes('manhole')) return 'Damaged Manhole';
+  if (norm.includes('footpath') || norm.includes('sidewalk') || norm.includes('walkway')) return 'Damaged Footpath';
+  if (norm.includes('debris') || norm.includes('blockage') || norm.includes('obstruction') || norm.includes('garbage')) return 'Road Debris / Obstruction';
   if (norm === 'road issue' || norm === 'road surface defect') return 'Road Surface Defect';
 
   // Capitalize words
-  return issueType
+  return clean
     .split(' ')
+    .filter(Boolean)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 }
+

@@ -1,5 +1,7 @@
 import AuthInput from '@/components/AuthInput';
+import ThemeToggle from '@/components/ThemeToggle';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { auth, db } from '@/firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -52,6 +54,7 @@ function validate(name: string, email: string, password: string, confirmPassword
 
 export default function SignUpScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -117,7 +120,19 @@ export default function SignUpScreen() {
   }
 };
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
+        </TouchableOpacity>
+        <ThemeToggle showLabel />
+      </View>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -129,12 +144,12 @@ export default function SignUpScreen() {
         >
           {/* Logo / Brand */}
           <View style={styles.brandRow} accessible accessibilityRole="header">
-            <Ionicons name="eye-outline" size={36} color={AppColors.primary} />
-            <Text style={styles.appName}>CivicEye</Text>
+            <Ionicons name="eye-outline" size={36} color={colors.buttonPrimary} />
+            <Text style={[styles.appName, { color: colors.textOnDark }]}>CivicEye</Text>
           </View>
 
-          <Text style={styles.heading}>Create Your CivicEye Account</Text>
-          <Text style={styles.subheading}>Fill in the details below to get started</Text>
+          <Text style={[styles.heading, { color: colors.textOnDark }]}>Create Your CivicEye Account</Text>
+          <Text style={[styles.subheading, { color: colors.textOnDarkSecondary }]}>Fill in the details below to get started</Text>
 
           {/* Form */}
           <View style={styles.form}>
@@ -177,7 +192,7 @@ export default function SignUpScreen() {
 
             {/* Password hint */}
             {!errors.password && (
-              <Text style={styles.hint}>Use at least 8 characters.</Text>
+              <Text style={[styles.hint, { color: colors.textOnDarkSecondary }]}>Use at least 8 characters.</Text>
             )}
 
             <AuthInput
@@ -194,7 +209,11 @@ export default function SignUpScreen() {
 
             {/* Sign Up Button */}
             <TouchableOpacity
-              style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
+              style={[
+                styles.primaryBtn,
+                { backgroundColor: colors.buttonPrimary },
+                loading && styles.primaryBtnDisabled,
+              ]}
               onPress={handleSignUp}
               disabled={loading}
               accessible
@@ -203,16 +222,16 @@ export default function SignUpScreen() {
               accessibilityState={{ disabled: loading, busy: loading }}
             >
               {loading ? (
-                <ActivityIndicator color={AppColors.white} accessibilityLabel="Creating account, please wait" />
+                <ActivityIndicator color="#FFFFFF" accessibilityLabel="Creating account, please wait" />
               ) : (
-                <Text style={styles.primaryBtnText}>Create Account</Text>
+                <Text style={[styles.primaryBtnText, { color: colors.buttonText }]}>Create Account</Text>
               )}
             </TouchableOpacity>
           </View>
 
           {/* Navigate to Login */}
           <View style={styles.switchRow}>
-            <Text style={styles.switchText}>Already have an account? </Text>
+            <Text style={[styles.switchText, { color: colors.textOnDarkSecondary }]}>Already have an account? </Text>
             <TouchableOpacity
               onPress={() => router.back()}
               accessible
@@ -220,7 +239,7 @@ export default function SignUpScreen() {
               accessibilityLabel="Login"
               accessibilityHint="Go back to the Login screen"
             >
-              <Text style={styles.switchLink}>Login</Text>
+              <Text style={[styles.switchLink, { color: colors.buttonPrimary }]}>Login</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -231,6 +250,16 @@ export default function SignUpScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: AppColors.background },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  backButton: {
+    padding: 6,
+  },
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,

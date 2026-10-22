@@ -13,7 +13,16 @@ export type ValidationStatus =
   | 'valid_clean_road'
   | 'unrelated_image'
   | 'unclear_image'
+  | 'unsupported_issue'
   | 'inference_error';
+
+export type PredictionState =
+  | 'VALID_ISSUE'
+  | 'NO_MAJOR_ISSUE'
+  | 'INVALID_IMAGE'
+  | 'UNCLEAR_IMAGE'
+  | 'UNSUPPORTED_ISSUE'
+  | 'INFERENCE_FAILED';
 
 export type PredictionStatus =
   | 'idle'
@@ -45,6 +54,7 @@ export interface CivicPredictionContract {
   // Validation & Lifecycle State
   validationStatus: ValidationStatus;
   predictionStatus: PredictionStatus;
+  predictionState: PredictionState;
   predictionError?: string | null;
 
   // Visual Localization
@@ -56,20 +66,26 @@ export interface CivicPredictionContract {
   departmentCode: string;
   priority: PredictionPriority;
   severity: PredictionPriority;
+  priorityReason?: string;
 
   // Scene Context
   isRoad: boolean;
   roadConfidence: number;  // 0-1 score
   message?: string;
+
+  // Provenance & Multimodal Fusion
+  modelVersion?: string;
+  agreementStatus?: 'AGREED' | 'DISAGREED' | 'NOT_APPLICABLE';
 }
 
 /**
- * Normalizes any detected issue string into a clean, human-readable display name.
+ * Normalizes any detected issue string into a clean, human-readable specific display name.
+ * Never defaults to generic "Road Issue" when a specific defect is known.
  */
 export function formatDisplayIssueName(issueType?: string | null): string {
-  if (!issueType) return 'Pending Analysis';
+  if (!issueType) return 'Pending Verification';
   const norm = issueType.trim().toLowerCase();
-  if (norm === 'no_major_issue' || norm === 'no supported issue detected') {
+  if (norm === 'no_major_issue' || norm === 'no supported issue detected' || norm === 'normal road surface (no major defect)') {
     return 'Normal Road Surface (No Major Defect)';
   }
   if (norm === 'unclear_image' || norm === 'unclear') {
@@ -78,16 +94,18 @@ export function formatDisplayIssueName(issueType?: string | null): string {
   if (norm.includes('invalid') || norm.includes('dissimilar')) {
     return 'Invalid Issue Image';
   }
-  if (norm === 'alligator cracking') return 'Alligator Cracking';
-  if (norm === 'cracking') return 'Road Surface Cracking';
   if (norm === 'pothole') return 'Pothole';
-  if (norm === 'road divider damage') return 'Road Divider Damage';
-  if (norm === 'street light fault') return 'Street Light Fault';
-  if (norm === 'manhole defect') return 'Manhole Defect';
-  if (norm === 'waterlogging') return 'Waterlogging / Drainage Block';
-  if (norm === 'debris / road blockage') return 'Debris / Road Blockage';
-  if (norm === 'damaged traffic sign') return 'Damaged Traffic Sign';
-  if (norm === 'damaged footpath') return 'Damaged Footpath';
+  if (norm === 'alligator cracking') return 'Alligator Cracking';
+  if (norm === 'cracking' || norm === 'road surface cracking') return 'Road Cracking';
+  if (norm === 'road divider damage' || norm === 'broken divider') return 'Road Divider Damage';
+  if (norm === 'damaged traffic sign' || norm === 'missing signage') return 'Damaged Traffic Sign';
+  if (norm === 'street light fault' || norm === 'streetlight fault') return 'Streetlight Fault';
+  if (norm === 'waterlogging') return 'Waterlogging';
+  if (norm === 'drainage blockage' || norm === 'drainage problem') return 'Drainage Blockage';
+  if (norm === 'manhole defect' || norm === 'damaged manhole') return 'Damaged Manhole';
+  if (norm === 'damaged footpath' || norm === 'broken footpath') return 'Damaged Footpath';
+  if (norm === 'debris / road blockage' || norm === 'road debris / obstruction') return 'Road Debris / Obstruction';
+  if (norm === 'road issue' || norm === 'road surface defect') return 'Road Surface Defect';
 
   // Capitalize words
   return issueType

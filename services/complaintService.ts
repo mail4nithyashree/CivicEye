@@ -38,6 +38,7 @@ import {
   type CivicPredictionContract,
   type ValidationStatus,
   type PredictionStatus,
+  type PredictionState,
   formatDisplayIssueName,
 } from './predictionContract';
 import * as Location from 'expo-location';
@@ -72,6 +73,8 @@ export function isInvalidImageComplaint(statusOrComplaint?: any): boolean {
   const insp = statusOrComplaint.inspectionStatus;
   const rejType = statusOrComplaint.rejectionType;
   const issue = statusOrComplaint.issueType;
+  const predState = statusOrComplaint.predictionState;
+  const valStatus = statusOrComplaint.validationStatus;
   return s === 'Invalid Image, give valid Issue Image!' ||
          s === 'Invalid Issue image, raise the complaint with the appropriate image!' ||
          s === 'Dissimilar Image to the Issue' ||
@@ -79,6 +82,8 @@ export function isInvalidImageComplaint(statusOrComplaint?: any): boolean {
          insp === 'INVALID' ||
          rejType === 'IMAGE_MISMATCH' ||
          rejType === 'INVALID_IMAGE' ||
+         predState === 'INVALID_IMAGE' ||
+         valStatus === 'unrelated_image' ||
          (typeof issue === 'string' && issue.includes('Invalid'));
 }
 
@@ -210,6 +215,16 @@ export interface Complaint {
   AI_confidence?: number;
   AI_validation?: string;
   AI_timestamp?: Date;
+  predictionState?: PredictionState;
+  priorityReason?: string;
+  displayIssueName?: string;
+  trainingCandidateStatus?: 'unverified_candidate' | 'inspector_verified' | 'rejected_candidate';
+  agreementStatus?: 'AGREED' | 'DISAGREED' | 'NOT_APPLICABLE';
+  modelVersion?: string;
+  originalPrediction?: string | null;
+  originalScore?: number;
+  imageValidationOutcome?: string;
+  feedbackTimestamp?: Date;
 
   // Lifecycle Status
   status: ComplaintStatus;
@@ -287,6 +302,9 @@ export interface NewComplaintData {
   confidence: number;
   priority: string;
   severity: string;
+  priorityReason?: string;
+  predictionState?: PredictionState;
+  displayIssueName?: string;
   department?: string;
   responsibleDepartment?: string;
   departmentCode?: string;
@@ -493,6 +511,9 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     confidence: typeof data.confidence === 'number' ? data.confidence : 0,
     priority: data.priority || data.severity || 'LOW',
     severity: data.severity || data.priority || 'LOW',
+    priorityReason: data.priorityReason,
+    displayIssueName: data.displayIssueName || formatDisplayIssueName(data.issueType || defaultIssue),
+    predictionState: data.predictionState,
     estimatedBudget: typeof data.estimatedBudget === 'number' ? data.estimatedBudget : data.inspectionDetails?.estimatedBudget,
     estimatedBudgetDesc: data.estimatedBudgetDesc || data.inspectionDetails?.estimatedBudgetDesc,
     budgetBreakdown: data.budgetBreakdown || data.inspectionDetails?.budgetBreakdown,
@@ -537,6 +558,13 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     AI_confidence: data.AI_confidence ?? data.confidence,
     AI_validation: data.AI_validation ?? data.roadValidationResult,
     AI_timestamp: parseDate(data.AI_timestamp),
+    trainingCandidateStatus: data.trainingCandidateStatus,
+    agreementStatus: data.agreementStatus,
+    modelVersion: data.modelVersion,
+    originalPrediction: data.originalPrediction,
+    originalScore: data.originalScore,
+    imageValidationOutcome: data.imageValidationOutcome,
+    feedbackTimestamp: parseDate(data.feedbackTimestamp),
 
     status: (data.status as ComplaintStatus) || 'Pending Field Verification',
     inspectionStatus: data.inspectionStatus,
@@ -853,7 +881,9 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
 
     // Typed AI Prediction Contract Fields
     predictedClass: contract?.predictedClass ?? (isDissimilar ? null : isNoMajorIssue ? null : (data.detectedIssue || data.issueType || null)),
-    displayIssueName: contract?.displayIssueName ?? formatDisplayIssueName(defaultIssue),
+    displayIssueName: contract?.displayIssueName ?? data.displayIssueName ?? formatDisplayIssueName(defaultIssue),
+    predictionState: contract?.predictionState ?? data.predictionState ?? (isDissimilar ? 'INVALID_IMAGE' : isNoMajorIssue ? 'NO_MAJOR_ISSUE' : 'VALID_ISSUE'),
+    priorityReason: contract?.priorityReason ?? data.priorityReason ?? (isDissimilar || isNoMajorIssue ? 'None: Invalid or clean image.' : `Assessed for ${contract?.displayIssueName || data.displayIssueName || defaultIssue}`),
     confidence: typeof data.confidence === 'number' ? data.confidence : 0,
     confidenceRaw: contract?.confidenceRaw ?? ((typeof data.confidence === 'number' ? data.confidence : 0) / 100),
     validationStatus: contract?.validationStatus ?? (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
@@ -861,6 +891,15 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     predictionError: contract?.predictionError ?? null,
     boundingBoxes: contract?.boundingBoxes ?? [],
     issueCategory: activeDept,
+
+    // Feedback & Continuous Learning Candidate Provenance
+    trainingCandidateStatus: 'unverified_candidate',
+    modelVersion: contract?.modelVersion || 'yolov8-road-v1',
+    originalPrediction: contract?.predictedClass || data.detectedIssue || data.issueType || null,
+    originalScore: typeof data.confidence === 'number' ? data.confidence : 0,
+    imageValidationOutcome: contract?.validationStatus || (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    agreementStatus: contract?.agreementStatus || 'AGREED',
+    feedbackTimestamp: serverTimestamp(),
 
     citizenId: data.citizenId,
     email: data.citizenEmail,
@@ -1196,6 +1235,9 @@ export async function submitFieldVerification(
       fieldVerifiedAt: serverTimestamp(),
       fieldVerifiedBy: verification.inspectorName,
       fieldVerifiedById: verification.inspectorId,
+      trainingCandidateStatus: 'inspector_verified',
+      verifiedIssueCategory: verification.verifiedIssue,
+      inspectorVerifiedAt: serverTimestamp(),
       estimatedResolutionDays: durationDays,
       estimatedResolutionDuration: durationText,
       expectedResolutionDate: expectedDate,
@@ -1308,6 +1350,8 @@ export async function rejectComplaintByInspector(
       inspectedByName: inspectorName,
       inspectedAt: serverTimestamp(),
       rejectedAt: serverTimestamp(),
+      trainingCandidateStatus: 'rejected_candidate',
+      inspectorVerifiedAt: serverTimestamp(),
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
     });
@@ -1709,6 +1753,7 @@ export function subscribeToUserComplaints(
     snapshot => {
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
+        .filter(c => !isInvalidImageComplaint(c))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       onData(complaints);
     },

@@ -20,6 +20,7 @@ import {
 } from '@/services/departmentMapping';
 import { analyzeCivicImage, type AnalysisResult } from '@/services/imageAnalysis';
 import { formatDisplayIssueName } from '@/services/predictionContract';
+import { calculatePriorityWithExplanation } from '@/services/detectionConfig';
 import { createNotification } from '@/services/notificationService';
 import { getResponsibleOfficerName } from '@/services/officerService';
 import { getEstimatedResolutionDuration, formatResolutionDate } from '@/services/resolutionDuration';
@@ -270,87 +271,45 @@ export default function ReportScreen() {
     setStep('checking');
 
     try {
-      const result = await analyzeCivicImage(imageUri);
+      const result = await analyzeCivicImage(imageUri, description.trim());
       console.log('[ANALYZE] Result:', result);
 
-      // 1. Check for Image Mismatch / Dissimilar Image
+      // 1. Check for Invalid Image (Flower, pet, food, indoor, unrelated)
       const isDissimilarImage =
+        result.predictionState === 'INVALID_IMAGE' ||
         result.isDissimilar ||
         result.analysisStatus === 'dissimilar_image' ||
         (!result.isRoad && result.isClear && (result.roadConfidence || 0) > 0.7 && result.analysisStatus !== 'unclear_image');
 
       if (isDissimilarImage) {
-        console.log('[ANALYZE] Dissimilar/invalid image detected. Persisting inactive rejection record...');
-        const cloudinaryUrl = await uploadComplaintImage(imageUri);
-        const submitRes = await submitComplaint({
-          citizenId: user?.uid || 'anonymous',
-          citizenEmail: user?.email ?? '',
-          imageUri: cloudinaryUrl,
-          description: description.trim(),
-          latitude: location.lat,
-          longitude: location.lng,
-          region: selectedRegion,
-          issueType: 'Invalid Issue image, raise the complaint with the appropriate image!',
-          confidence: 0,
-          priority: 'NONE',
-          severity: 'NONE',
-          department: 'Road Maintenance Department',
-          responsibleDepartment: 'Road Maintenance Department',
-          departmentCode: 'ROAD',
-          departmentSource: 'ai_classifier',
-          routingStatus: 'Direct',
-          roadValidationResult: 'dissimilar_image',
-          roadValidationConfidence: result.roadConfidence || 0.95,
-          analysisStatus: 'dissimilar_image',
-          detectedIssue: 'Invalid Issue image, raise the complaint with the appropriate image!',
-          status: 'Invalid Issue image, raise the complaint with the appropriate image!',
-          inspectionStatus: 'INVALID',
-          rejectionType: 'IMAGE_MISMATCH',
-          rejectionReason: 'Invalid Issue image, raise the complaint with the appropriate image!',
-          fieldVerificationStatus: 'rejected',
-        });
-
+        console.log('[ANALYZE] Invalid / unrelated image detected. Logging rejection and halting...');
         await logAnalysisRecord({
           citizenId: user?.uid,
           citizenEmail: user?.email ?? '',
-          imageReference: cloudinaryUrl,
+          imageReference: imageUri,
           roadValidationResult: 'dissimilar_image',
-          roadValidationConfidence: result.roadConfidence || 0.95,
+          roadValidationConfidence: result.roadConfidence || 0.05,
           analysisStatus: 'dissimilar_image',
-          detectedIssue: 'Invalid Issue image, raise the complaint with the appropriate image!',
+          detectedIssue: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           detectionConfidence: 0,
           latitude: location.lat,
           longitude: location.lng,
           region: selectedRegion,
         });
 
-        try {
-          await createNotification({
-            userId: user?.uid || 'anonymous',
-            recipientId: user?.uid || 'anonymous',
-            recipientRole: 'citizen',
-            complaintId: submitRes.id,
-            title: 'Complaint Inactive: Invalid Image',
-            message: `Your complaint (${submitRes.complaintId}) was marked inactive: Invalid Issue image, raise the complaint with the appropriate image!`,
-            type: 'complaint_raised',
-          });
-        } catch (e) {
-          console.log('[handleAnalyze] Citizen rejection notification note:', e);
-        }
-
         setRejectedInfo({
-          complaintId: submitRes.complaintId,
-          reason: 'Invalid Issue image, raise the complaint with the appropriate image!',
+          complaintId: 'N/A',
+          reason: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           rejectionType: 'IMAGE_MISMATCH',
-          issueType: 'Invalid Issue image, raise the complaint with the appropriate image!',
-          imageUrl: cloudinaryUrl,
+          issueType: 'Invalid Issue Image',
+          imageUrl: imageUri,
         });
         setStep('rejected');
         return;
       }
 
       // 2. Check for Uncertain / Unclear Image
-      const isUnclear = result.analysisStatus === 'unclear_image' || !result.isClear;
+      const isUnclear = result.predictionState === 'UNCLEAR_IMAGE' || result.analysisStatus === 'unclear_image' || !result.isClear;
       if (isUnclear) {
         console.log('[ANALYZE] Prompting for photo review due to unclear/ambiguous image...');
         setUncertainAnalysis(result);
@@ -361,7 +320,7 @@ export default function ReportScreen() {
       const classifiedDept = classifyDepartmentFromDescription(description.trim(), result.department);
       const normDesc = description.toLowerCase().trim();
 
-      // 3. Check if routed to Public Works Department (PWD)
+      // 3. Check if routed to Public Works Department (PWD) via description
       const isPWD =
         result.issueType === 'Public Route Issue' ||
         classifiedDept.departmentCode === 'PWD' ||
@@ -383,6 +342,9 @@ export default function ReportScreen() {
           ? 'Damaged Footpath'
           : 'Public Route Issue';
 
+        // Calculate explainable severity-based priority from description evidence
+        const priorityAnalysis = calculatePriorityWithExplanation(issueName, result.confidence || 0, undefined, 1, description.trim());
+
         await logAnalysisRecord({
           citizenId: user?.uid,
           citizenEmail: user?.email ?? '',
@@ -390,7 +352,7 @@ export default function ReportScreen() {
           roadValidationConfidence: result.roadConfidence || 0.95,
           analysisStatus: 'damage_detected',
           detectedIssue: issueName,
-          detectionConfidence: result.confidence > 0 ? result.confidence : 90,
+          detectionConfidence: result.confidence,
           latitude: location.lat,
           longitude: location.lng,
           region: selectedRegion,
@@ -400,11 +362,14 @@ export default function ReportScreen() {
           isRoad: true,
           roadConfidence: result.roadConfidence || 0.95,
           hasDamage: true,
+          predictionState: result.hasDamage ? 'VALID_ISSUE' : 'UNSUPPORTED_ISSUE',
+          displayIssueName: issueName,
+          priorityReason: priorityAnalysis.reason,
           analysisStatus: 'damage_detected',
           issueType: issueName,
-          confidence: result.confidence > 0 ? result.confidence : 90,
-          confidenceRaw: result.confidenceRaw > 0 ? result.confidenceRaw : 0.9,
-          priority: result.priority || 'MEDIUM',
+          confidence: result.confidence, // Genuine confidence: 0 if model doesn't support class
+          confidenceRaw: result.confidenceRaw,
+          priority: priorityAnalysis.priority,
           department: 'Public Works Department',
           departmentCode: 'PWD',
           allDetections: result.allDetections,
@@ -421,6 +386,9 @@ export default function ReportScreen() {
           classifiedDept.matchedKeyword
         );
 
+        // Calculate explainable priority from description evidence
+        const priorityAnalysis = calculatePriorityWithExplanation(nonRoadIssue, result.confidence || 0, undefined, 1, description.trim());
+
         await logAnalysisRecord({
           citizenId: user?.uid,
           citizenEmail: user?.email ?? '',
@@ -428,7 +396,7 @@ export default function ReportScreen() {
           roadValidationConfidence: result.roadConfidence || 0.95,
           analysisStatus: 'damage_detected',
           detectedIssue: nonRoadIssue,
-          detectionConfidence: result.confidence > 0 ? result.confidence : 90,
+          detectionConfidence: result.confidence,
           latitude: location.lat,
           longitude: location.lng,
           region: selectedRegion,
@@ -438,11 +406,14 @@ export default function ReportScreen() {
           isRoad: true,
           roadConfidence: result.roadConfidence || 0.95,
           hasDamage: true,
+          predictionState: result.hasDamage ? 'VALID_ISSUE' : 'UNSUPPORTED_ISSUE',
+          displayIssueName: formatDisplayIssueName(nonRoadIssue),
+          priorityReason: priorityAnalysis.reason,
           analysisStatus: 'damage_detected',
           issueType: nonRoadIssue,
-          confidence: result.confidence > 0 ? result.confidence : 90,
-          confidenceRaw: result.confidenceRaw > 0 ? result.confidenceRaw : 0.9,
-          priority: result.priority || 'MEDIUM',
+          confidence: result.confidence, // Genuine confidence: 0 if model doesn't support class
+          confidenceRaw: result.confidenceRaw,
+          priority: priorityAnalysis.priority,
           department: classifiedDept.department,
           departmentCode: classifiedDept.departmentCode,
           allDetections: result.allDetections,
@@ -453,7 +424,7 @@ export default function ReportScreen() {
       }
 
       // 5. Valid Road Surface with NO Visible Major Defect (Outcome B)
-      if (result.analysisStatus === 'no_major_issue' || !result.hasDamage || result.confidence === 0) {
+      if (result.predictionState === 'NO_MAJOR_ISSUE' || result.analysisStatus === 'no_major_issue' || !result.hasDamage || result.confidence === 0) {
         console.log('[ANALYZE] Valid road surface without detected defects. Transitioning to no_issue step...');
         await logAnalysisRecord({
           citizenId: user?.uid,
@@ -461,7 +432,7 @@ export default function ReportScreen() {
           roadValidationResult: 'road',
           roadValidationConfidence: result.roadConfidence || 0.95,
           analysisStatus: 'no_major_issue',
-          detectedIssue: 'No supported issue detected',
+          detectedIssue: 'No Major Issue',
           detectionConfidence: 0,
           latitude: location.lat,
           longitude: location.lng,
@@ -472,6 +443,9 @@ export default function ReportScreen() {
           ...result,
           isRoad: true,
           hasDamage: false,
+          predictionState: 'NO_MAJOR_ISSUE',
+          displayIssueName: 'No Major Issue',
+          priorityReason: 'Normal road surface verified. No major road defects detected.',
           analysisStatus: 'no_major_issue',
           issueType: 'no_major_issue',
           confidence: 0,
@@ -487,13 +461,17 @@ export default function ReportScreen() {
       }
 
       // 6. Valid Civic Infrastructure Defect Detected (Outcome A)
+      const primaryIssueName = formatDisplayIssueName(result.issueType);
+      const isMismatch = (normDesc.includes('pothole') && result.issueType.includes('cracking')) ||
+                         (normDesc.includes('crack') && result.issueType.includes('pothole'));
+
       await logAnalysisRecord({
         citizenId: user?.uid,
         citizenEmail: user?.email ?? '',
         roadValidationResult: 'road',
         roadValidationConfidence: result.roadConfidence || 0.95,
         analysisStatus: 'damage_detected',
-        detectedIssue: result.issueType,
+        detectedIssue: primaryIssueName,
         detectionConfidence: result.confidence,
         latitude: location.lat,
         longitude: location.lng,
@@ -503,8 +481,11 @@ export default function ReportScreen() {
       setAnalysis({
         ...result,
         issueType: result.issueType,
+        displayIssueName: primaryIssueName,
         hasDamage: true,
+        predictionState: 'VALID_ISSUE',
         priority: (result.priority && result.priority !== 'NONE') ? result.priority : 'MEDIUM',
+        priorityReason: result.priorityReason || `${result.priority || 'MEDIUM'} priority assessed from defect severity and road safety risk.`,
         department: result.department || 'Road Maintenance Department',
         departmentCode: result.departmentCode || 'ROAD',
         confidence: result.confidence,
@@ -520,6 +501,9 @@ export default function ReportScreen() {
         isRoad: true,
         roadConfidence: 0.5,
         hasDamage: false,
+        predictionState: 'UNCLEAR_IMAGE',
+        displayIssueName: 'Unclear Image (Pending Manual Verification)',
+        priorityReason: 'Inference failure fallback. Routed for municipal verification.',
         analysisStatus: 'unclear_image',
         issueType: fallbackDept.department,
         confidence: 0,
@@ -1221,6 +1205,9 @@ export default function ReportScreen() {
                   isRoad: true,
                   roadConfidence: uncertainAnalysis?.roadConfidence || 0.85,
                   hasDamage: false,
+                  predictionState: 'UNCLEAR_IMAGE',
+                  displayIssueName: formatDisplayIssueName(resolvedIssue),
+                  priorityReason: 'Manual verification requested for unclear image.',
                   analysisStatus: 'unclear_image',
                   issueType: resolvedIssue,
                   confidence: 0,
@@ -1370,29 +1357,37 @@ export default function ReportScreen() {
             <Text style={styles.resultHeading}>Issue Summary</Text>
             <View style={styles.resultRow}>
               <Ionicons name="alert-circle" size={20} color={AppColors.primary} />
-              <Text style={styles.resultIssue}>{formatDisplayIssueName(analysis.issueType)}</Text>
+              <Text style={styles.resultIssue}>{analysis.displayIssueName || formatDisplayIssueName(analysis.issueType)}</Text>
             </View>
             <View style={styles.resultGrid}>
               <View style={styles.resultItem}>
                 <Text style={styles.resultItemLabel}>Department</Text>
                 <Text style={styles.resultItemValueSmall}>{displayDept}</Text>
               </View>
-              {isRoad ? (
-                <View style={styles.resultItem}>
-                  <Text style={styles.resultItemLabel}>Priority</Text>
-                  <Text style={[styles.resultItemValueSmall, priorityTextColor(analysis.priority)]}>
-                    {analysis.priority}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.resultItem}>
-                  <Text style={styles.resultItemLabel}>Routing Status</Text>
-                  <Text style={[styles.resultItemValueSmall, !isRoad ? styles.swmRoutingText : {}]}>
-                    {classifiedDept?.routingStatus || (!isRoad ? `Moved to ${displayDept}` : 'Direct')}
-                  </Text>
-                </View>
-              )}
+              <View style={styles.resultItem}>
+                <Text style={styles.resultItemLabel}>Priority</Text>
+                <Text style={[styles.resultItemValueSmall, priorityTextColor(analysis.priority)]}>
+                  {analysis.priority}
+                </Text>
+              </View>
             </View>
+
+            {analysis.confidence > 0 ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                <Ionicons name="sparkles" size={14} color="#059669" />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#047857' }}>
+                  AI Model Confidence: {analysis.confidence}%
+                </Text>
+              </View>
+            ) : null}
+
+            {analysis.priorityReason ? (
+              <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 8, marginTop: 8, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                <Text style={{ fontSize: 11, color: AppColors.textSecondary, fontWeight: '600' }}>
+                  Priority Reason: <Text style={{ color: AppColors.textPrimary, fontWeight: '500' }}>{analysis.priorityReason}</Text>
+                </Text>
+              </View>
+            ) : null}
 
             <View style={[styles.resultGrid, { marginTop: 8 }]}>
               <View style={styles.resultItem}>

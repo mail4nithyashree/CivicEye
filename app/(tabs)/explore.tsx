@@ -1,7 +1,7 @@
 import ComplaintCard from '@/components/ComplaintCard';
 import { ALL_COIMBATORE_REGIONS, getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
 import { AppColors } from '@/constants/colors';
-import { subscribeToAllComplaints, type Complaint } from '@/services/complaintService';
+import { subscribeToAllComplaints, isInvalidImageComplaint, type Complaint } from '@/services/complaintService';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -72,7 +72,8 @@ export default function ExploreScreen() {
   ), [handleCardPress]);
 
   // Filter complaints
-  const filtered = complaints.filter(c => {
+  const validComplaints = complaints.filter(c => !isInvalidImageComplaint(c));
+  const filtered = validComplaints.filter(c => {
     const matchesRegion = selectedRegion === 'All' || c.region === selectedRegion;
     const issue = (c.inspectionDetails?.verifiedIssue || c.issueType || '').toLowerCase();
     const matchesCat = selectedCategory === 'All' || issue.includes(selectedCategory.toLowerCase()) || selectedCategory.toLowerCase().includes(issue);
@@ -84,13 +85,13 @@ export default function ExploreScreen() {
   });
 
   // Calculate city-wide metrics
-  const totalBudget = complaints.reduce(
+  const totalBudget = validComplaints.reduce(
     (sum, c) => sum + (c.inspectionDetails?.estimatedBudget || c.estimatedBudget || (c.issueType ? getStandardEstimatedBudget(c.issueType, c.priority || c.severity).budget : 0)),
     0
   );
-  const totalInspected = complaints.filter(c => !!c.inspectionDetails).length;
-  const totalInProgress = complaints.filter(c => c.status === 'In Progress').length;
-  const totalResolved = complaints.filter(c => c.status === 'Resolved' || c.status === 'Closed').length;
+  const totalInspected = validComplaints.filter(c => !!c.inspectionDetails).length;
+  const totalInProgress = validComplaints.filter(c => c.status === 'In Progress').length;
+  const totalResolved = validComplaints.filter(c => c.status === 'Resolved' || c.status === 'Closed').length;
 
   return (
     <SafeAreaView style={styles.safe}>

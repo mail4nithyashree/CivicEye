@@ -11,6 +11,7 @@ import {
 import { isRoadDepartment } from '@/services/departmentMapping';
 import { formatResolutionDate } from '@/services/resolutionDuration';
 import { getResponsibleOfficerName } from '@/services/officerService';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -210,7 +211,7 @@ export default function ComplaintDetailScreen() {
           <View style={styles.statusRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.issueHeading}>
-                {isMismatchedRejection ? 'Invalid Image, give valid Issue Image!' : complaint.issueType}
+                {isMismatchedRejection ? 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.' : formatDisplayIssueName(complaint.displayIssueName || complaint.issueType)}
               </Text>
               <Text style={styles.dateText}>Reported on {dateStr}</Text>
             </View>

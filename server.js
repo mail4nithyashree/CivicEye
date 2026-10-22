@@ -107,76 +107,151 @@ const CLASS_ID_MAP = {
   'missing signage': 'damaged traffic sign',
 };
 
-function calculatePriority(issueType, confidence, boundingBox, detectionCount = 1) {
-  if (!issueType || issueType === 'no_major_issue' || issueType.includes('Invalid') || issueType.includes('unclear')) {
-    return 'NONE';
+function getCanonicalIssueName(rawIssue) {
+  const norm = (rawIssue || '').toLowerCase().trim();
+  if (norm.includes('pothole')) return 'Pothole';
+  if (norm.includes('alligator')) return 'Alligator Cracking';
+  if (norm.includes('cracking') || norm.includes('crack')) return 'Road Cracking';
+  if (norm.includes('divider')) return 'Road Divider Damage';
+  if (norm.includes('sign')) return 'Damaged Traffic Sign';
+  if (norm.includes('light')) return 'Streetlight Fault';
+  if (norm.includes('waterlogging') || norm.includes('flood')) return 'Waterlogging';
+  if (norm.includes('manhole')) return 'Damaged Manhole';
+  if (norm.includes('footpath') || norm.includes('walkway')) return 'Damaged Footpath';
+  if (norm.includes('debris') || norm.includes('blockage') || norm.includes('obstruction')) return 'Road Debris / Obstruction';
+  if (norm.includes('drainage')) return 'Drainage Blockage';
+  if (norm === 'no_major_issue' || norm.includes('no major') || norm.includes('clean road')) return 'No Major Issue';
+  return 'Road Surface Defect';
+}
+
+function calculatePriorityWithExplanation(issueType, boundingBox, description = '', detectionCount = 1) {
+  const normType = (issueType || '').toLowerCase().trim();
+  const desc = (description || '').toLowerCase().trim();
+  const area = boundingBox ? (boundingBox.width * boundingBox.height) : 0;
+
+  if (!normType || normType === 'no_major_issue' || normType.includes('invalid') || normType.includes('unclear')) {
+    return { priority: 'NONE', reason: 'No actionable infrastructure defect identified.' };
   }
 
-  const area = boundingBox ? boundingBox.width * boundingBox.height : 0;
+  const hasUrgentHazard =
+    desc.includes('severe') || desc.includes('deep') || desc.includes('hazard') ||
+    desc.includes('danger') || desc.includes('accident') || desc.includes('swerve') ||
+    desc.includes('swerving') || desc.includes('active lane') || desc.includes('traffic lane') ||
+    desc.includes('busy road') || desc.includes('junction') || desc.includes('highway') ||
+    desc.includes('lorry') || desc.includes('crash') || desc.includes('bike fell') ||
+    desc.includes('fall') || desc.includes('injury') || desc.includes('emergency') ||
+    desc.includes('major obstruction') || desc.includes('completely blocked') ||
+    desc.includes('open manhole') || desc.includes('broken divider');
 
-  // Potholes: High urgency vehicular & road safety hazard
-  if (issueType === 'pothole') {
-    if (confidence >= 0.45 || area >= 0.08 || detectionCount > 1) return 'HIGH';
-    if (confidence >= 0.20 || area >= 0.03) return 'MEDIUM';
-    return 'LOW';
+  const hasMinorEvidence =
+    desc.includes('minor') || desc.includes('small') || desc.includes('slight') ||
+    desc.includes('hairline') || desc.includes('surface only') || desc.includes('low risk') ||
+    desc.includes('shallow');
+
+  // Pothole evaluation
+  if (normType.includes('pothole')) {
+    if (hasUrgentHazard || area >= 0.10 || detectionCount >= 3) {
+      const reason = hasUrgentHazard
+        ? 'High: Pothole with immediate safety hazard or active traffic risk reported.'
+        : 'High: Large visible pothole surface area posing significant vehicle hazard.';
+      return { priority: 'HIGH', reason };
+    }
+    if (hasMinorEvidence && area < 0.03 && detectionCount <= 1) {
+      return { priority: 'LOW', reason: 'Low: Small/minor pothole defect with low immediate hazard.' };
+    }
+    if (area >= 0.03 || desc.includes('moderate') || detectionCount > 1) {
+      return { priority: 'MEDIUM', reason: 'Medium: Moderate pothole requiring standard municipal repair.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Road pothole detected; scheduled for standard road repair.' };
   }
 
-  // Alligator Cracking: Structural base failure
-  if (issueType === 'alligator cracking') {
-    if (confidence >= 0.50 || area >= 0.10 || detectionCount > 2) return 'HIGH';
-    if (confidence >= 0.32 || area >= 0.04) return 'MEDIUM';
-    return 'LOW';
+  // Alligator Cracking evaluation
+  if (normType.includes('alligator')) {
+    if (hasUrgentHazard || area >= 0.15 || detectionCount >= 4) {
+      return { priority: 'HIGH', reason: 'High: Extensive alligator cracking indicating severe sub-base structural failure.' };
+    }
+    if (hasMinorEvidence || (area < 0.04 && detectionCount <= 1)) {
+      return { priority: 'LOW', reason: 'Low: Early-stage surface alligator cracking with low immediate structural risk.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Moderate alligator cracking requiring road resurfacing.' };
   }
 
-  // Cracking: Longitudinal and Transverse cracks
-  if (issueType === 'cracking') {
-    if (confidence >= 0.65 || area >= 0.12 || detectionCount > 3) return 'HIGH';
-    if (confidence >= 0.38 || area >= 0.04 || detectionCount > 1) return 'MEDIUM';
-    return 'LOW';
+  // Linear / Transverse Cracking evaluation
+  if (normType.includes('cracking')) {
+    if (hasUrgentHazard && (area >= 0.08 || desc.includes('deep'))) {
+      return { priority: 'HIGH', reason: 'High: Deep longitudinal/transverse fracture threatening road safety.' };
+    }
+    if (hasMinorEvidence) {
+      return { priority: 'LOW', reason: 'Low: Minor surface cracking without immediate structural hazard.' };
+    }
+    if (area >= 0.03 || desc.includes('long') || desc.includes('spread') || desc.includes('across') || desc.includes('lane') || desc.includes('traffic')) {
+      return { priority: 'MEDIUM', reason: 'Medium: Noticeable road cracking requiring crack sealing maintenance.' };
+    }
+    return { priority: 'LOW', reason: 'Low: Minor surface cracking without immediate structural hazard.' };
   }
 
-  // Road Divider / Median Damage: Major collision hazard
-  if (issueType === 'road divider damage') {
-    if (confidence >= 0.40 || area >= 0.06 || detectionCount > 1) return 'HIGH';
-    return 'MEDIUM';
+  // Road Divider / Median Damage
+  if (normType.includes('divider')) {
+    if (hasUrgentHazard || desc.includes('traffic') || desc.includes('lane') || area >= 0.08) {
+      return { priority: 'HIGH', reason: 'High: Broken road divider obstructing active traffic lane.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Road divider damage requiring structural replacement.' };
   }
 
-  // Street Light Fault: Night vision hazard
-  if (issueType === 'street light fault') {
-    if (confidence >= 0.45) return 'HIGH';
-    return 'MEDIUM';
+  // Damaged Manhole
+  if (normType.includes('manhole')) {
+    if (hasUrgentHazard || desc.includes('open') || desc.includes('missing') || desc.includes('broken')) {
+      return { priority: 'HIGH', reason: 'High: Damaged or open manhole posing critical fall and vehicular hazard.' };
+    }
+    return { priority: 'HIGH', reason: 'High: Manhole defect requires urgent priority inspection.' };
   }
 
-  // Manhole Defect: Severe hazard
-  if (issueType === 'manhole defect') {
-    return 'HIGH';
-  }
-
-  // Waterlogging / Road Flooding: Hydroplaning & base erosion
-  if (issueType === 'waterlogging') {
-    if (confidence >= 0.45 || area >= 0.10) return 'HIGH';
-    return 'MEDIUM';
+  // Waterlogging
+  if (normType.includes('waterlogging') || normType.includes('flood')) {
+    if (hasUrgentHazard || desc.includes('stagnant') || desc.includes('submerged') || area >= 0.12) {
+      return { priority: 'HIGH', reason: 'High: Severe waterlogging causing vehicle swerving or road obstruction.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Stagnant water accumulation affecting road drainage.' };
   }
 
   // Debris / Road Blockage
-  if (issueType === 'debris / road blockage') {
-    if (confidence >= 0.50 || area >= 0.08) return 'HIGH';
-    return 'MEDIUM';
+  if (normType.includes('debris') || normType.includes('blockage') || normType.includes('obstruction')) {
+    if (hasUrgentHazard || desc.includes('blocked') || desc.includes('traffic')) {
+      return { priority: 'HIGH', reason: 'High: Substantial debris or road blockage in active vehicular path.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Road debris requiring solid waste clearing.' };
   }
 
-  // Damaged Traffic Sign / Missing Signage
-  if (issueType === 'damaged traffic sign' || issueType === 'missing signage') {
-    if (confidence >= 0.50) return 'MEDIUM';
-    return 'LOW';
+  // Streetlight Fault
+  if (normType.includes('light') || normType.includes('pole')) {
+    if (hasUrgentHazard || desc.includes('hanging') || desc.includes('bent') || desc.includes('shock') || desc.includes('wire')) {
+      return { priority: 'HIGH', reason: 'High: Hazardous streetlight or electrical wiring risk.' };
+    }
+    return { priority: 'MEDIUM', reason: 'Medium: Streetlight outage affecting night visibility.' };
+  }
+
+  // Damaged Traffic Sign
+  if (normType.includes('sign')) {
+    if (hasUrgentHazard || desc.includes('stop') || desc.includes('school') || desc.includes('junction')) {
+      return { priority: 'MEDIUM', reason: 'Medium: Missing or damaged critical traffic regulatory sign.' };
+    }
+    return { priority: 'LOW', reason: 'Low: Non-critical traffic sign damage requiring maintenance.' };
   }
 
   // Damaged Footpath
-  if (issueType === 'damaged footpath') {
-    if (confidence >= 0.50 || area >= 0.10) return 'MEDIUM';
-    return 'LOW';
+  if (normType.includes('footpath') || normType.includes('walkway')) {
+    if (hasUrgentHazard || desc.includes('pedestrian') || desc.includes('fall') || desc.includes('elderly')) {
+      return { priority: 'MEDIUM', reason: 'Medium: Damaged footpath creating pedestrian hazard.' };
+    }
+    return { priority: 'LOW', reason: 'Low: Minor pedestrian walkway surface wear.' };
   }
 
-  return 'LOW';
+  return { priority: 'LOW', reason: 'Low: Infrastructure defect reported with low immediate hazard.' };
+}
+
+function calculatePriority(issueType, confidence, boundingBox, detectionCount = 1) {
+  const result = calculatePriorityWithExplanation(issueType, boundingBox, '', detectionCount);
+  return result.priority;
 }
 
 
@@ -279,7 +354,7 @@ function decodeImageBuffer(buffer) {
       const { execFileSync } = require('child_process');
       const pyScript = path.join(__dirname, 'scripts', 'decode_image.py');
       if (fs.existsSync(pyScript)) {
-        const rawBytes = execFileSync('python', [pyScript], { input: buffer, maxBuffer: 50 * 1024 * 1024 });
+        const rawBytes = execFileSync('python', [pyScript], { input: buffer, maxBuffer: 50 * 1024 * 1024, timeout: 10000 });
         const w = rawBytes.readUInt32LE(0);
         const h = rawBytes.readUInt32LE(4);
         return {
@@ -392,39 +467,28 @@ const ROAD_AND_INFRASTRUCTURE_CLASSES = new Set([
   839, // suspension bridge, viaduct
   919, // street sign
   920, // traffic light
-  // Terrain textures often corresponding to road surfaces / asphalt / earth
-  970, // alp
-  971, // bubble / asphalt texture
-  972, // cliff
-  974, // cliff, drop-off, gravel edge
-  975, // lakeshore
-  976, // promontory
-  977, // sandbar, spit
-  978, // seashore, coast
-  979, // valley
-  980, // volcano, ash, rocky asphalt, slag
-  // Pavement crack and grid textures in ImageNet
-  489, // chainlink fence (alligator crack hexagonal mesh)
-  539, // doormat (pavement grid)
-  599, // honeycomb (crack polygon)
   640, // manhole (utility frame)
   825, // stone wall (macadam / paving stones)
-  858, // tile roof (polygonal cracking blocks)
   916, // granular asphalt macadam texture
+  971, // bubble / asphalt texture
 ]);
 
 // Plant / Flower / Flora & Insect related classes
 const FLOWER_PLANT_CLASSES = new Set([
   309, // bee / honeybee (common on garden flower closeups)
+  310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322,
   323, // monarch butterfly
-  325, // sulphur butterfly
+  324, 325, 326, // butterflies
   580, // greenhouse, nursery
   723, // pinwheel (decorative garden)
   738, // pot, flowerpot
   883, // urn / vase
   899, // vase
+  946, 947, 948, 949, 950, 951, 952, // cardoon, artichoke, head cabbage, broccoli, cauliflower, zucchini, spaghetti squash
   984, // rapeseed
-  985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998,
+  985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998, // daisy, yellow lady's slipper, dandelion, iris, etc.
+  999, // earthstar (fungus / flora)
+  1000 // hen-of-the-woods
 ]);
 
 // Food, Produce & Domestic Fruit classes (ImageNet 923..969)
@@ -570,8 +634,9 @@ async function validateRoadPresence(decodedImage) {
       isRoad: false,
       isClear: true,
       confidence: 0.05,
+      predictionState: 'INVALID_IMAGE',
       reason: 'Portrait / person detected',
-      message: 'Invalid Image, give valid Issue Image!',
+      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
     };
   }
 
@@ -581,8 +646,9 @@ async function validateRoadPresence(decodedImage) {
       isRoad: false,
       isClear: true,
       confidence: 0.05,
+      predictionState: 'INVALID_IMAGE',
       reason: 'Flora / foliage without road pavement',
-      message: 'Invalid Image, give valid Issue Image!',
+      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
     };
   }
 
@@ -592,8 +658,9 @@ async function validateRoadPresence(decodedImage) {
       isRoad: false,
       isClear: true,
       confidence: 0.05,
+      predictionState: 'INVALID_IMAGE',
       reason: 'Vivid flower colors without road pavement',
-      message: 'Invalid Image, give valid Issue Image!',
+      message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
     };
   }
 
@@ -622,8 +689,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Animal / pet detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -634,8 +702,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Flower / plant detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -646,8 +715,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Food / non-infrastructure object detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -658,8 +728,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Person / clothing detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -670,8 +741,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Indoor / unrelated object detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -681,8 +753,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Non-road or unrelated image detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
 
@@ -692,8 +765,9 @@ async function validateRoadPresence(decodedImage) {
             isRoad: false,
             isClear: true,
             confidence: 0.05,
+            predictionState: 'INVALID_IMAGE',
             reason: 'Non-road or unrelated image detected',
-            message: 'Invalid Image, give valid Issue Image!',
+            message: 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.',
           };
         }
       }
@@ -800,19 +874,19 @@ function applyNms(candidates, iouThreshold = IOU_THRESHOLD) {
 }
 
 const CLASS_CONF_THRESHOLDS = {
-  0: 0.05, // Alligator cracking
-  1: 0.05, // Linear cracking
-  2: 0.04, // Pothole (calibrated: catches real potholes like pothole_user_crop [0.0434] while clean roads remain < 0.016)
-  3: 0.15, // Manhole defect
-  4: 0.15, // Waterlogging
-  5: 0.15, // Road divider damage
-  6: 0.15, // Damaged traffic sign
-  7: 0.15, // Street light fault
-  8: 0.15, // Debris / road blockage
-  9: 0.15, // Damaged footpath
+  0: 0.25, // Alligator cracking
+  1: 0.25, // Linear cracking
+  2: 0.25, // Pothole
+  3: 0.25, // Manhole defect
+  4: 0.25, // Waterlogging
+  5: 0.25, // Road divider damage
+  6: 0.25, // Damaged traffic sign
+  7: 0.25, // Street light fault
+  8: 0.25, // Debris / road blockage
+  9: 0.25, // Damaged footpath
 };
 
-function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
+function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD, description = '') {
   const data = outputTensor.data;
   const dims = outputTensor.dims; // [1, 7, 8400] or [1, 14, 8400]
   const numAnchors = dims[2] || 8400;
@@ -837,7 +911,7 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
       }
     }
 
-    const thresh = CLASS_CONF_THRESHOLDS[bestClass] || 0.20;
+    const thresh = CLASS_CONF_THRESHOLDS[bestClass] || 0.25;
 
     if (maxScore >= thresh) {
       // Filter out tiny edge border pad artifacts
@@ -850,7 +924,7 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
       const x2 = cx + w / 2;
       const y2 = cy + h / 2;
       const issueType = CLASS_ID_MAP[bestClass] || `issue_class_${bestClass}`;
-      const calConf = calibrateConfidence(maxScore, bestClass);
+      const canonicalName = getCanonicalIssueName(issueType);
       const bBox = {
         x: Math.max(0, Math.min(1, cx / MODEL_INPUT_WIDTH)),
         y: Math.max(0, Math.min(1, cy / MODEL_INPUT_HEIGHT)),
@@ -858,12 +932,16 @@ function parseYoloOutput(outputTensor, iouThreshold = IOU_THRESHOLD) {
         height: Math.max(0, Math.min(1, h / MODEL_INPUT_HEIGHT)),
       };
 
+      const priorityInfo = calculatePriorityWithExplanation(issueType, bBox, description, 1);
+
       candidates.push({
         classId: bestClass,
         issueType,
+        displayIssueName: canonicalName,
         rawConfidence: maxScore,
-        confidence: calConf,
-        priority: calculatePriority(issueType, calConf, bBox),
+        confidence: maxScore, // Genuine model confidence
+        priority: priorityInfo.priority,
+        priorityReason: priorityInfo.reason,
         box: [x1, y1, x2, y2],
         boundingBox: bBox,
       });
@@ -894,8 +972,10 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       imageBuffer = Buffer.from(b64, 'base64');
     }
 
+    const description = (req.body && req.body.description) ? String(req.body.description).trim() : '';
+
     if (!imageBuffer) {
-      return res.status(400).json({ ok: false, message: 'No image provided.' });
+      return res.status(400).json({ ok: false, predictionState: 'INFERENCE_FAILED', message: 'No image provided.' });
     }
 
     let decodedImage;
@@ -908,12 +988,20 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
         isRoad: false,
         isDissimilar: true,
         isClear: false,
+        predictionState: 'UNCLEAR_IMAGE',
+        validationStatus: 'unclear_image',
+        agreementStatus: 'NOT_APPLICABLE',
         analysisStatus: 'unclear_image',
         detectedIssue: 'unclear_image',
+        displayIssueName: 'Unclear Image (Manual Review Required)',
         invalidReason: 'blurry_image',
         confidence: 0,
+        confidenceRaw: 0,
         hasDamage: false,
+        priority: 'NONE',
+        priorityReason: 'Image file could not be decoded. Manual review required.',
         department: null,
+        responsibleDepartment: null,
         message: 'The uploaded file could not be decoded. Please upload a clear photo of the civic issue.',
         allDetections: [],
         primaryDetection: null,
@@ -925,21 +1013,33 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     if (!validation.isRoad) {
       console.log("[YOLO] Non-road or dissimilar image detected:", validation.reason);
       const isUnclear = validation.reason === 'blurry_image' || validation.reason === 'dark_image' || validation.reason === 'overexposed_image';
+      const predictionState = isUnclear ? 'UNCLEAR_IMAGE' : 'INVALID_IMAGE';
+      const displayIssueName = isUnclear ? 'Unclear Image (Manual Review Required)' : 'Invalid Issue Image';
+      const userMessage = validation.message || (isUnclear
+        ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
+        : 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.');
+
       return res.status(200).json({
         ok: true,
         isRoad: false,
         isDissimilar: !isUnclear,
         isClear: !isUnclear,
         roadConfidence: validation.confidence,
+        predictionState,
+        validationStatus: isUnclear ? 'unclear_image' : 'unrelated_image',
+        agreementStatus: 'NOT_APPLICABLE',
         analysisStatus: isUnclear ? 'unclear_image' : 'dissimilar_image',
         detectedIssue: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
+        displayIssueName,
         issueType: isUnclear ? 'unclear_image' : 'Invalid Image, give valid Issue Image!',
-        invalidReason: validation.reason || 'Invalid Image, give valid Issue Image!',
+        invalidReason: validation.reason || 'unrelated_image',
         confidence: 0,
+        confidenceRaw: 0,
         priority: 'NONE',
-        message: validation.message || (isUnclear
-          ? 'The uploaded image is unclear, blurry, or poorly lit. Please upload a clear photo or submit for manual review.'
-          : 'Invalid Image, give valid Issue Image!'),
+        priorityReason: isUnclear ? 'Image quality insufficient for automated assessment.' : 'Image does not contain valid civic road infrastructure.',
+        department: null,
+        responsibleDepartment: null,
+        message: userMessage,
         allDetections: [],
         primaryDetection: null,
       });
@@ -952,7 +1052,7 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
     const results = await session.run(feeds);
     const outputName = session.outputNames[0];
     const outputTensor = results[outputName];
-    let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD);
+    let detections = parseYoloOutput(outputTensor, IOU_THRESHOLD, description);
 
     console.log(`[ONNX Inference Diagnostics] Model: ${MODEL_PATH}`);
     console.log(`[ONNX Inference Diagnostics] Input dims: [1, 3, ${MODEL_INPUT_HEIGHT}, ${MODEL_INPUT_WIDTH}]`);
@@ -987,20 +1087,42 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
 
       const primary = sorted[0];
       const dept = ISSUE_DEPT_MAP[primary.issueType] || { name: 'Road Maintenance', code: 'ROAD' };
+      const canonicalName = getCanonicalIssueName(primary.issueType);
 
-      console.log("[YOLO] Damage detected:", primary.issueType, `(${Math.round(primary.confidence * 100)}%)`);
+      const descLower = description.toLowerCase();
+      let agreementStatus = 'AGREED';
+      if (descLower) {
+        const isLighting = descLower.includes('light') || descLower.includes('lamp') || descLower.includes('darkness');
+        const isSwm = descLower.includes('garbage') || descLower.includes('waste') || descLower.includes('trash') || descLower.includes('debris');
+        const isDrain = descLower.includes('drain') || descLower.includes('flood') || descLower.includes('waterlog');
+        const isDivider = descLower.includes('divider') || descLower.includes('median');
+        const isSign = descLower.includes('sign') || descLower.includes('board');
+        
+        const defectIsRoad = primary.issueType === 'pothole' || primary.issueType === 'alligator cracking' || primary.issueType === 'cracking';
+        if (defectIsRoad && (isLighting || isSwm || isDrain || isDivider || isSign)) {
+          agreementStatus = 'DISAGREED';
+        }
+      }
+
+      console.log("[YOLO] Damage detected:", canonicalName, `(${Math.round(primary.rawConfidence * 100)}%)`);
       return res.status(200).json({
         ok: true,
         isRoad: true,
         hasDamage: true,
         roadConfidence: 0.95,
+        predictionState: 'VALID_ISSUE',
+        validationStatus: 'valid_defect',
+        agreementStatus,
         analysisStatus: 'damage_detected',
         issueType: primary.issueType,
-        detectedIssue: primary.issueType,
-        confidence: Math.round(primary.confidence * 100),
+        detectedIssue: canonicalName,
+        displayIssueName: canonicalName,
+        confidence: Math.round(primary.rawConfidence * 100),
         confidenceRaw: primary.rawConfidence,
         priority: primary.priority,
+        priorityReason: primary.priorityReason,
         department: dept.name,
+        responsibleDepartment: dept.name,
         departmentCode: dept.code,
         boundingBox: primary.boundingBox,
         allDetections: sorted,
@@ -1015,15 +1137,21 @@ app.post('/api/analyze-road', upload.single('image'), async (req, res) => {
       isRoad: true,
       hasDamage: false,
       roadConfidence: validation.confidence,
+      predictionState: 'NO_MAJOR_ISSUE',
+      validationStatus: 'valid_clean_road',
+      agreementStatus: 'AGREED',
       analysisStatus: 'no_major_issue',
       issueType: 'no_major_issue',
-      detectedIssue: 'no_major_issue',
+      detectedIssue: 'No Major Issue',
+      displayIssueName: 'No Major Issue',
       confidence: 0,
       confidenceRaw: 0,
       priority: 'NONE',
+      priorityReason: 'Normal road surface verified. No major road defects detected.',
       department: 'Road Maintenance',
+      responsibleDepartment: 'Road Maintenance',
       departmentCode: 'ROAD',
-      message: 'No supported issue detected.',
+      message: 'Verified normal road surface. No major road defects detected.',
       allDetections: [],
       primaryDetection: null,
     });
@@ -1271,6 +1399,9 @@ app.post('/api/verify-complaint', async (req, res) => {
     const updatePayload = {
       status: 'Verified',
       inspectionStatus: 'VALID',
+      trainingCandidateStatus: 'inspector_verified',
+      verifiedIssueCategory: verification.verifiedIssue || 'pothole',
+      inspectorVerifiedAt: serverTimestamp(),
       severity: verification.severity || 'MEDIUM',
       priority: verification.severity || 'MEDIUM',
       estimatedBudget: budgetNum,
@@ -1464,6 +1595,8 @@ app.post('/api/reject-complaint', async (req, res) => {
       ...(evidenceUrl ? { inspectionEvidenceUrl: evidenceUrl } : {}),
       inspectedBy: inspectorId || 'inspector',
       inspectedByName: inspectorName || 'Field Inspector',
+      trainingCandidateStatus: 'rejected_candidate',
+      inspectorVerifiedAt: serverTimestamp(),
       inspectedAt: serverTimestamp(),
       rejectedAt: serverTimestamp(),
       statusHistory: [...existingHistory, historyItem],

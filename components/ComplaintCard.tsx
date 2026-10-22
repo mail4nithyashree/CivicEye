@@ -3,6 +3,7 @@ import { AppColors } from '@/constants/colors';
 import { getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
 import type { Complaint } from '@/services/complaintService';
 import { isRoadDepartment } from '@/services/departmentMapping';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import StatusBadge from './StatusBadge';
@@ -48,8 +49,8 @@ function ComplaintCardComponent({ complaint, onPress }: Props) {
 
   const priority = complaint.inspectionDetails?.severity || complaint.priority || complaint.severity || 'LOW';
   const issue = isMismatchedRejection
-    ? 'Invalid Issue image, raise the complaint with the appropriate image!'
-    : (complaint.inspectionDetails?.verifiedIssue || complaint.issueType || 'Road Issue');
+    ? 'Invalid issue image. Please upload a clear image of the reported civic infrastructure issue.'
+    : formatDisplayIssueName(complaint.displayIssueName || complaint.inspectionDetails?.verifiedIssue || complaint.issueType);
 
   const isRoad = isRoadDepartment(complaint.department || complaint.responsibleDepartment);
   const isMoved = !isRoad || !!complaint.routingStatus?.startsWith('Moved');

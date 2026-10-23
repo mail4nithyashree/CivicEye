@@ -5,6 +5,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -21,6 +22,7 @@ import { auth } from '@/firebaseConfig';
 import {
   subscribeToComplaint,
   deleteComplaintByCitizen,
+  respondToClarificationByCitizen,
   type Complaint,
   type StatusHistoryItem,
 } from '@/services/complaintService';
@@ -39,6 +41,8 @@ export default function ComplaintDetailScreen() {
   const [complaint, setComplaint] = useState<Complaint | null>(null);
   const [assignedOfficerName, setAssignedOfficerName] = useState<string>('Awaiting Assignment');
   const [loading, setLoading] = useState(true);
+  const [clarificationResponseText, setClarificationResponseText] = useState('');
+  const [submittingClarification, setSubmittingClarification] = useState(false);
 
   useEffect(() => {
     if (complaint?.department || complaint?.departmentCode) {
@@ -117,6 +121,30 @@ export default function ComplaintDetailScreen() {
         },
       ]
     );
+  };
+
+  const handleRespondClarification = async () => {
+    if (!complaint || !auth.currentUser || !clarificationResponseText.trim()) {
+      Alert.alert('Required', 'Please enter your clarification response before submitting.');
+      return;
+    }
+    setSubmittingClarification(true);
+    try {
+      await respondToClarificationByCitizen(
+        complaint.id,
+        auth.currentUser.uid,
+        clarificationResponseText.trim()
+      );
+      setClarificationResponseText('');
+      Alert.alert(
+        'Clarification Submitted',
+        'Thank you! Your response has been dispatched to the Field Inspector.'
+      );
+    } catch (err: any) {
+      Alert.alert('Submission Error', err?.message || 'Failed to submit clarification response.');
+    } finally {
+      setSubmittingClarification(false);
+    }
   };
 
   const formattedCreatedDate = complaint.createdAt.toLocaleString('en-IN', {
@@ -320,6 +348,120 @@ export default function ComplaintDetailScreen() {
                 <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
               </View>
             </GradientCard>
+
+            {/* Inspector Clarification Banner & Response Flow */}
+            {(complaint.status === 'Needs Clarification' || complaint.clarificationRequest) && (
+              <GradientCard style={[styles.card, { borderColor: '#F59E0B', borderWidth: 1.5 }]}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="help-circle-outline" size={22} color="#D97706" />
+                  <Text style={[styles.cardTitle, { color: '#D97706', flex: 1 }]}>
+                    Clarification Requested by Field Inspector
+                  </Text>
+                </View>
+
+                <View style={{ marginVertical: 8 }}>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
+                    Inspector Question:
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 20 }}>
+                    "{complaint.clarificationRequest}"
+                  </Text>
+                  {complaint.clarificationRequestedBy ? (
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                      Requested by {complaint.clarificationRequestedBy}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {complaint.citizenClarificationResponse ? (
+                  <View style={[styles.noticeBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F0FDF4', borderColor: '#BBF7D0', marginTop: 8 }]}>
+                    <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700', marginBottom: 2 }}>
+                      Your Submitted Response:
+                    </Text>
+                    <Text style={{ fontSize: 13, color: colors.textPrimary, lineHeight: 18 }}>
+                      {complaint.citizenClarificationResponse}
+                    </Text>
+                  </View>
+                ) : isOwner ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textPrimary, marginBottom: 6 }}>
+                      Respond to Inspector:
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: isDark ? colors.surface : '#FFFFFF',
+                        color: colors.textPrimary,
+                        borderColor: colors.border,
+                        borderWidth: 1,
+                        borderRadius: 8,
+                        padding: 10,
+                        fontSize: 13,
+                        minHeight: 70,
+                        textAlignVertical: 'top',
+                      }}
+                      placeholder="Provide additional details or landmark clarification..."
+                      placeholderTextColor={colors.textSecondary}
+                      multiline
+                      value={clarificationResponseText}
+                      onChangeText={setClarificationResponseText}
+                      editable={!submittingClarification}
+                    />
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#D97706',
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 8,
+                        marginTop: 10,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                      onPress={handleRespondClarification}
+                      disabled={submittingClarification}
+                    >
+                      {submittingClarification ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="send" size={15} color="#FFFFFF" />
+                          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                            Submit Clarification
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </GradientCard>
+            )}
+
+            {/* Inspector Closure Card */}
+            {complaint.status === 'Closed' && complaint.closureReason && (
+              <GradientCard style={[styles.card, { borderColor: '#10B981', borderWidth: 1.5 }]}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="checkmark-done-circle-outline" size={22} color="#059669" />
+                  <Text style={[styles.cardTitle, { color: '#059669', flex: 1 }]}>
+                    Complaint Closed: {complaint.closureOutcome || 'No Major Repair Required'}
+                  </Text>
+                </View>
+
+                <View style={{ marginVertical: 8 }}>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
+                    Inspection Findings / Closure Reason:
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 20 }}>
+                    "{complaint.closureReason}"
+                  </Text>
+                  {complaint.closedBy ? (
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                      Closed by Field Inspector {complaint.closedBy}
+                    </Text>
+                  ) : null}
+                </View>
+              </GradientCard>
+            )}
 
             {/* Structured Complaint Details Card */}
             <GradientCard style={styles.card}>

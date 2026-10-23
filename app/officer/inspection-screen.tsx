@@ -18,6 +18,8 @@ import {
   submitFieldVerification,
   subscribeToComplaint,
   uploadComplaintImage,
+  requestClarificationByInspector,
+  closeComplaintByInspector,
   type Complaint,
 } from '@/services/complaintService';
 import { type DetectedIssueType } from '@/services/detectionConfig';
@@ -55,6 +57,14 @@ const REJECTION_PRESETS = [
   'Temporary utility/construction work in progress with permit',
   'Uploaded image is fake, unrelated, or does not match location',
   'Other (Specify custom reason)',
+];
+
+const CLOSURE_OUTCOMES = [
+  'No Major Repair Required',
+  'Minor Issue Resolved on Site',
+  'Routine Pavement Wear (Monitored)',
+  'Addressed in Ongoing Project',
+  'Duplicate / Administrative Closure',
 ];
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -110,8 +120,16 @@ export default function InspectionScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [submittingStatusText, setSubmittingStatusText] = useState('');
 
-  // Decision State: genuine vs fake
-  const [decision, setDecision] = useState<'genuine' | 'fake'>('genuine');
+  // Decision State: genuine vs clarification vs no_repair vs fake
+  type InspectionDecision = 'genuine' | 'clarification' | 'no_repair' | 'fake';
+  const [decision, setDecision] = useState<InspectionDecision>('genuine');
+
+  // Clarification states
+  const [clarificationQuestion, setClarificationQuestion] = useState('');
+
+  // No repair / Closure states
+  const [closureOutcome, setClosureOutcome] = useState('No Major Repair Required');
+  const [closureReason, setClosureReason] = useState('');
 
   // Field Verification Form States
   const [verifiedIssue, setVerifiedIssue] = useState<DetectedIssueType>('pothole');
@@ -544,6 +562,64 @@ export default function InspectionScreen() {
     }
   };
 
+  // Clarification Request Handler
+  const handleRequestClarification = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!clarificationQuestion.trim()) {
+      Alert.alert('Required', 'Please enter a clear clarification question for the citizen.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmittingStatusText('Dispatching clarification request...');
+    try {
+      await requestClarificationByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        clarificationQuestion.trim(),
+        inspectorRemarks.trim() || undefined
+      );
+      Alert.alert('Clarification Dispatched', 'Clarification requested. The citizen has been notified via in-app alert and email.', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      Alert.alert('Clarification Error', err?.message || 'Failed to dispatch clarification request.');
+    } finally {
+      setSubmitting(false);
+      setSubmittingStatusText('');
+    }
+  };
+
+  // Minor / No Repair Closure Handler
+  const handleCloseNoRepair = async () => {
+    if (!complaint || !user || !officer) return;
+    const finalReason = closureReason.trim() || inspectorRemarks.trim();
+    if (!finalReason) {
+      Alert.alert('Required', 'Please record your on-site inspection findings or reason for closing without major repair.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmittingStatusText('Closing complaint in records...');
+    try {
+      await closeComplaintByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        finalReason,
+        closureOutcome,
+        inspectorRemarks.trim() || undefined
+      );
+      Alert.alert('Complaint Closed', `Complaint has been officially closed: [${closureOutcome}]. Citizen has been notified.`, [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      Alert.alert('Closure Error', err?.message || 'Failed to close complaint.');
+    } finally {
+      setSubmitting(false);
+      setSubmittingStatusText('');
+    }
+  };
+
   if (loading || !officer) {
     return (
       <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
@@ -769,7 +845,7 @@ export default function InspectionScreen() {
             >
               <Ionicons
                 name="checkmark-circle"
-                size={26}
+                size={22}
                 color={decision === 'genuine' ? AppColors.white : AppColors.success}
               />
             </View>
@@ -780,10 +856,86 @@ export default function InspectionScreen() {
                 decision === 'genuine' && styles.decisionTitleGenuine,
               ]}
             >
-              Genuine Issue
+              Verify Issue
             </Text>
             <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
-              Defect verified on site.
+              Verified for repair
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+              decision === 'clarification' && styles.decisionCardClarifySelected,
+            ]}
+            onPress={() => setDecision('clarification')}
+            activeOpacity={0.8}
+            accessible
+            accessibilityRole="radio"
+            accessibilityState={{ selected: decision === 'clarification' }}
+          >
+            <View
+              style={[
+                styles.decisionIconCircle,
+                decision === 'clarification' && styles.decisionIconCircleClarify,
+              ]}
+            >
+              <Ionicons
+                name="help-circle"
+                size={22}
+                color={decision === 'clarification' ? AppColors.white : '#D97706'}
+              />
+            </View>
+            <Text
+              style={[
+                styles.decisionTitle,
+                { color: colors.textPrimary },
+                decision === 'clarification' && styles.decisionTitleClarify,
+              ]}
+            >
+              Clarify
+            </Text>
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Ask citizen details
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+              decision === 'no_repair' && styles.decisionCardNoRepairSelected,
+            ]}
+            onPress={() => setDecision('no_repair')}
+            activeOpacity={0.8}
+            accessible
+            accessibilityRole="radio"
+            accessibilityState={{ selected: decision === 'no_repair' }}
+          >
+            <View
+              style={[
+                styles.decisionIconCircle,
+                decision === 'no_repair' && styles.decisionIconCircleNoRepair,
+              ]}
+            >
+              <Ionicons
+                name="shield-checkmark"
+                size={22}
+                color={decision === 'no_repair' ? AppColors.white : '#2563EB'}
+              />
+            </View>
+            <Text
+              style={[
+                styles.decisionTitle,
+                { color: colors.textPrimary },
+                decision === 'no_repair' && styles.decisionTitleNoRepair,
+              ]}
+            >
+              No Repair
+            </Text>
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Minor / Close
             </Text>
           </TouchableOpacity>
 
@@ -807,7 +959,7 @@ export default function InspectionScreen() {
             >
               <Ionicons
                 name="close-circle"
-                size={26}
+                size={22}
                 color={decision === 'fake' ? AppColors.white : AppColors.error}
               />
             </View>
@@ -821,10 +973,82 @@ export default function InspectionScreen() {
               Fake / Invalid
             </Text>
             <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
-              No defect or invalid.
+              Reject report
             </Text>
           </TouchableOpacity>
         </View>
+
+        {decision === 'clarification' ? (
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: '#F59E0B', borderWidth: 1.5 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="help-circle" size={20} color="#D97706" />
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Clarification Request for Citizen *
+              </Text>
+            </View>
+            <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
+              Specify the exact clarification needed from the citizen (e.g., landmark, defect location, access details):
+            </Text>
+            <TextInput
+              style={[styles.textInput, { minHeight: 70, backgroundColor: colors.surfaceElevated, color: colors.textPrimary, borderColor: colors.border, marginTop: 8 }]}
+              placeholder="e.g. Please clarify exact landmark near bus stop or whether pothole is on left service lane..."
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              value={clarificationQuestion}
+              onChangeText={setClarificationQuestion}
+            />
+          </View>
+        ) : null}
+
+        {decision === 'no_repair' ? (
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: '#2563EB', borderWidth: 1.5 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="shield-checkmark" size={20} color="#2563EB" />
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Minor / No Major Repair Required Findings *
+              </Text>
+            </View>
+            <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
+              Select the field assessment outcome justifying closure without major repair assignment:
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 }}>
+              {CLOSURE_OUTCOMES.map(outcome => (
+                <TouchableOpacity
+                  key={outcome}
+                  style={[
+                    styles.optionChip,
+                    { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                    closureOutcome === outcome && { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+                  ]}
+                  onPress={() => setClosureOutcome(outcome)}
+                >
+                  <Text
+                    style={[
+                      styles.optionChipText,
+                      { color: colors.textPrimary },
+                      closureOutcome === outcome && { color: AppColors.white, fontWeight: '700' },
+                    ]}
+                  >
+                    {outcome}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.fieldSub, { color: colors.textSecondary, marginTop: 6 }]}>
+              Closure Reason & Field Inspection Findings *:
+            </Text>
+            <TextInput
+              style={[styles.textInput, { minHeight: 70, backgroundColor: colors.surfaceElevated, color: colors.textPrimary, borderColor: colors.border, marginTop: 8 }]}
+              placeholder="Explain on-site findings: e.g. Surface wear is within standard tolerance; no structural cavity found. Routine monitoring scheduled."
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              value={closureReason}
+              onChangeText={setClosureReason}
+            />
+          </View>
+        ) : null}
 
         {decision === 'genuine' ? (
           <>
@@ -1187,7 +1411,7 @@ export default function InspectionScreen() {
           )}
         </View>
 
-        {/* Action Buttons: Confirm Valid vs Reject */}
+        {/* Action Buttons: Confirm Valid vs Clarify vs No Repair vs Reject */}
         <View style={styles.actionBtnRow}>
           {decision === 'genuine' ? (
             <TouchableOpacity
@@ -1209,6 +1433,52 @@ export default function InspectionScreen() {
                 <View style={styles.submitBtnContent}>
                   <Ionicons name="shield-checkmark" size={18} color={AppColors.white} />
                   <Text style={styles.verifySubmitBtnText}>Submit Field Verification</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : decision === 'clarification' ? (
+            <TouchableOpacity
+              style={[styles.verifySubmitBtn, { backgroundColor: '#D97706' }, submitting && styles.btnDisabled]}
+              onPress={handleRequestClarification}
+              disabled={submitting}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Dispatch Clarification Request"
+            >
+              {submitting ? (
+                <View style={styles.submittingRow}>
+                  <ActivityIndicator color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>
+                    {submittingStatusText || 'Dispatching...'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.submitBtnContent}>
+                  <Ionicons name="help-circle" size={18} color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>Dispatch Clarification Request</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : decision === 'no_repair' ? (
+            <TouchableOpacity
+              style={[styles.verifySubmitBtn, { backgroundColor: '#2563EB' }, submitting && styles.btnDisabled]}
+              onPress={handleCloseNoRepair}
+              disabled={submitting}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Close Complaint (No Repair Needed)"
+            >
+              {submitting ? (
+                <View style={styles.submittingRow}>
+                  <ActivityIndicator color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>
+                    {submittingStatusText || 'Closing...'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.submitBtnContent}>
+                  <Ionicons name="checkmark-done-circle" size={18} color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>Close Complaint (No Repair Needed)</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -1588,14 +1858,22 @@ const styles = StyleSheet.create({
     borderColor: AppColors.success,
     backgroundColor: '#F0FDF4',
   },
+  decisionCardClarifySelected: {
+    borderColor: '#D97706',
+    backgroundColor: '#FFFBEB',
+  },
+  decisionCardNoRepairSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
   decisionCardFakeSelected: {
     borderColor: AppColors.error,
     backgroundColor: '#FEF2F2',
   },
   decisionIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1604,11 +1882,17 @@ const styles = StyleSheet.create({
   decisionIconCircleGenuine: {
     backgroundColor: AppColors.success,
   },
+  decisionIconCircleClarify: {
+    backgroundColor: '#D97706',
+  },
+  decisionIconCircleNoRepair: {
+    backgroundColor: '#2563EB',
+  },
   decisionIconCircleFake: {
     backgroundColor: AppColors.error,
   },
   decisionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: AppColors.textPrimary,
     marginBottom: 2,
@@ -1616,6 +1900,12 @@ const styles = StyleSheet.create({
   },
   decisionTitleGenuine: {
     color: AppColors.success,
+  },
+  decisionTitleClarify: {
+    color: '#D97706',
+  },
+  decisionTitleNoRepair: {
+    color: '#2563EB',
   },
   decisionTitleFake: {
     color: AppColors.error,

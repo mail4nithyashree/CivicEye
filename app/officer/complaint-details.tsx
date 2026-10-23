@@ -15,6 +15,8 @@ import {
   verifyComplaintWorkflow,
   isInvalidImageComplaint,
   deleteComplaintByAuthority,
+  requestClarificationByInspector,
+  closeComplaintByInspector,
   type Complaint,
 } from '@/services/complaintService';
 import {
@@ -98,6 +100,16 @@ export default function OfficerComplaintDetailsScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletionReason, setDeletionReason] = useState('');
   const [deletingComplaint, setDeletingComplaint] = useState(false);
+
+  // Inspector Clarification & Closure Modals State
+  const [showClarificationModal, setShowClarificationModal] = useState(false);
+  const [clarifyQuestion, setClarifyQuestion] = useState('');
+  const [submittingClarify, setSubmittingClarify] = useState(false);
+
+  const [showClosureModal, setShowClosureModal] = useState(false);
+  const [closureOutcome, setClosureOutcome] = useState('No Major Repair Required');
+  const [closureReasonText, setClosureReasonText] = useState('');
+  const [submittingClosure, setSubmittingClosure] = useState(false);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -402,6 +414,55 @@ export default function OfficerComplaintDetailsScreen() {
       Alert.alert('Transfer Error', 'Failed to transfer complaint to another department.');
     } finally {
       setTransferringDept(false);
+    }
+  };
+
+  const handleInspectorRequestClarification = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!clarifyQuestion.trim()) {
+      Alert.alert('Required', 'Please enter a clarification question for the citizen.');
+      return;
+    }
+    setSubmittingClarify(true);
+    try {
+      await requestClarificationByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        clarifyQuestion.trim()
+      );
+      setShowClarificationModal(false);
+      setClarifyQuestion('');
+      Alert.alert('Clarification Dispatched', 'Clarification requested. Citizen has been notified by in-app alert and email.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to dispatch clarification.');
+    } finally {
+      setSubmittingClarify(false);
+    }
+  };
+
+  const handleInspectorCloseComplaint = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!closureReasonText.trim()) {
+      Alert.alert('Required', 'Please enter inspection findings or reason for closure.');
+      return;
+    }
+    setSubmittingClosure(true);
+    try {
+      await closeComplaintByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        closureReasonText.trim(),
+        closureOutcome
+      );
+      setShowClosureModal(false);
+      setClosureReasonText('');
+      Alert.alert('Complaint Closed', `Complaint has been officially closed: [${closureOutcome}]. Citizen has been notified.`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to close complaint.');
+    } finally {
+      setSubmittingClosure(false);
     }
   };
 
@@ -1391,7 +1452,7 @@ export default function OfficerComplaintDetailsScreen() {
                       Inspectors and officers can confirm this complaint belongs to {complaint.department || complaint.responsibleDepartment} or re-route it if another department is involved.
                     </Text>
 
-                    <View style={styles.verificationBtnGroup}>
+                    <View style={[styles.verificationBtnGroup, { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }]}>
                       <TouchableOpacity
                         style={styles.verifyConfirmBtn}
                         onPress={() => setShowConfirmDeptModal(true)}
@@ -1416,6 +1477,35 @@ export default function OfficerComplaintDetailsScreen() {
                       >
                         <Ionicons name="swap-horizontal" size={16} color="#0369A1" />
                         <Text style={styles.verifyTransferBtnText}>Another Dept Involved</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.verifyTransferBtn, { borderColor: '#D97706', backgroundColor: '#FFFBEB' }]}
+                        onPress={() => {
+                          setClarifyQuestion('');
+                          setShowClarificationModal(true);
+                        }}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Request Clarification"
+                      >
+                        <Ionicons name="help-circle-outline" size={16} color="#D97706" />
+                        <Text style={[styles.verifyTransferBtnText, { color: '#D97706' }]}>Request Clarification</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.verifyTransferBtn, { borderColor: '#2563EB', backgroundColor: '#EFF6FF' }]}
+                        onPress={() => {
+                          setClosureOutcome('No Major Repair Required');
+                          setClosureReasonText('');
+                          setShowClosureModal(true);
+                        }}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Close (No Repair)"
+                      >
+                        <Ionicons name="shield-checkmark-outline" size={16} color="#2563EB" />
+                        <Text style={[styles.verifyTransferBtnText, { color: '#2563EB' }]}>Close (No Repair)</Text>
                       </TouchableOpacity>
                     </View>
                   </GradientCard>
@@ -1914,6 +2004,137 @@ export default function OfficerComplaintDetailsScreen() {
                   <ActivityIndicator color={AppColors.white} />
                 ) : (
                   <Text style={styles.modalSubmitText}>Confirm & Notify</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Inspector Clarification Modal */}
+      <Modal visible={showClarificationModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: '#F59E0B' }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="help-circle" size={22} color="#D97706" />
+              <Text style={[styles.modalTitle, { color: '#D97706' }]}>Request Citizen Clarification</Text>
+            </View>
+
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.issueType}
+            </Text>
+
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+              Specify the clarification needed from the citizen. The complaint status will update to "Needs Clarification", and the citizen will be notified via in-app alert and email.
+            </Text>
+
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, height: 80, textAlignVertical: 'top', marginTop: 6 }]}
+              placeholder="e.g. Please clarify exact landmark near bus stop or provide additional defect photo..."
+              placeholderTextColor={colors.inputPlaceholder}
+              value={clarifyQuestion}
+              onChangeText={setClarifyQuestion}
+              multiline
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setShowClarificationModal(false)}
+                disabled={submittingClarify}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, { backgroundColor: '#D97706' }, (!clarifyQuestion.trim() || submittingClarify) && styles.disabledBtn]}
+                onPress={handleInspectorRequestClarification}
+                disabled={!clarifyQuestion.trim() || submittingClarify}
+              >
+                {submittingClarify ? (
+                  <ActivityIndicator color={AppColors.white} />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Send Clarification</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Inspector Closure Modal */}
+      <Modal visible={showClosureModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: '#2563EB' }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="shield-checkmark" size={22} color="#2563EB" />
+              <Text style={[styles.modalTitle, { color: '#2563EB' }]}>Close Complaint (No Major Repair)</Text>
+            </View>
+
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.issueType}
+            </Text>
+
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+              Select the closure outcome and record on-site inspection findings. The citizen will be notified of closure with your reason.
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
+              {['No Major Repair Required', 'Minor Issue Resolved on Site', 'Routine Wear (Monitored)', 'Addressed in Ongoing Project'].map(outcome => (
+                <TouchableOpacity
+                  key={outcome}
+                  style={[
+                    {
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.border,
+                    },
+                    closureOutcome === outcome && { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+                  ]}
+                  onPress={() => setClosureOutcome(outcome)}
+                >
+                  <Text
+                    style={[
+                      { fontSize: 12, color: colors.textPrimary },
+                      closureOutcome === outcome && { color: AppColors.white, fontWeight: '700' },
+                    ]}
+                  >
+                    {outcome}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, height: 75, textAlignVertical: 'top', marginTop: 6 }]}
+              placeholder="Inspection findings & reason for closure (Required)..."
+              placeholderTextColor={colors.inputPlaceholder}
+              value={closureReasonText}
+              onChangeText={setClosureReasonText}
+              multiline
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setShowClosureModal(false)}
+                disabled={submittingClosure}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, { backgroundColor: '#2563EB' }, (!closureReasonText.trim() || submittingClosure) && styles.disabledBtn]}
+                onPress={handleInspectorCloseComplaint}
+                disabled={!closureReasonText.trim() || submittingClosure}
+              >
+                {submittingClosure ? (
+                  <ActivityIndicator color={AppColors.white} />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Close Complaint</Text>
                 )}
               </TouchableOpacity>
             </View>

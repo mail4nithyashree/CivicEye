@@ -846,6 +846,35 @@ app.post('/api/validate-road', upload.single('image'), async (req, res) => {
   }
 });
 
+function hasPositiveCivicIssue(text) {
+  if (!text || typeof text !== 'string') return { hasIssue: false };
+  const norm = text.toLowerCase().trim();
+
+  const issueDefs = [
+    { name: 'Street Light Fault', pattern: /\b(street\s*lights?|lamps?|lamp\s*posts?|light\s*poles?|lights?\s*not\s*working|streetlight\s*is\s*not\s*working)\b/i },
+    { name: 'Pothole', pattern: /\b(potholes?|pot\s*holes?|craters?|road\s*pits?|asphalt\s*cavity|deep\s*pothole|large\s*pothole)\b/i },
+    { name: 'Road Crack', pattern: /\b(cracks?|cracking|alligator\s*cracking|fissures?|road\s*has\s*long\s*cracks)\b/i },
+    { name: 'Waterlogging', pattern: /\b(waterlogging|water\s*logging|standing\s*water|water\s*accumulat\w+|flooded|water\s*puddles?)\b/i },
+    { name: 'Drainage Blockage', pattern: /\b(blocked\s*drains?|storm\s*drains?|drains?\s*(?:is|are)?\s*blocked|clogged\s*drains?|drainage\s*blockage|drainage\s*is\s*blocked|drainage)\b/i },
+    { name: 'Damaged Manhole', pattern: /\b(manholes?|man\s*hole|broken\s*manhole|open\s*manhole|manhole\s*cover\s*is\s*damaged|damaged\s*manhole)\b/i },
+    { name: 'Damaged Footpath', pattern: /\b(footpaths?|sidewalks?|pedestrian\s*walkway|broken\s*footpath)\b/i },
+    { name: 'Road Divider Damage', pattern: /\b(road\s*dividers?|medians?|broken\s*divider|damaged\s*divider)\b/i },
+    { name: 'Damaged Traffic Sign', pattern: /\b(traffic\s*signs?|signboards?|missing\s*sign|damaged\s*traffic\s*sign)\b/i },
+    { name: 'Garbage Overflow', pattern: /\b(garbage|trash|dustbins?|waste\s*dump|overflowing\s*garbage)\b/i },
+  ];
+
+  for (const def of issueDefs) {
+    if (def.pattern.test(norm)) {
+      const negationRegex = new RegExp(`\\b(?:no|not|without)\\s+(?:a\\s+|an\\s+|any\\s+)?(?:visible\\s+|noticeable\\s+)?${def.pattern.source.replace(/^\\b|\\b$/g, '')}`, 'i');
+      const match = norm.match(negationRegex);
+      if (!match) {
+        return { hasIssue: true, issueName: def.name };
+      }
+    }
+  }
+  return { hasIssue: false };
+}
+
 /**
  * Image-Description Validation Gatekeeper Endpoint
  * Evaluates image relevance, visible defect evidence, description meaning, and consistency.
@@ -980,19 +1009,33 @@ app.post('/api/validate-complaint', upload.single('image'), async (req, res) => 
     }
 
     // Clean normal road
+    const positiveIssue = !isUniversalNoIssue ? hasPositiveCivicIssue(description) : { hasIssue: false };
     if (predictedClass === 'valid_road_no_issue') {
+      if (!positiveIssue.hasIssue) {
+        return res.json({
+          ok: true,
+          isValid: false,
+          outcome: 'BLOCK_NORMAL_ROAD',
+          title: 'No Issue Found',
+          message: 'No Issue Found. The uploaded image does not show a clearly identifiable civic issue. Please upload an image showing the problem you want to report.',
+        });
+      }
+      // If description reports a positive civic defect, the image validates civic road presence.
+      // Description is the authoritative issue classifier!
+      const canonicalName = positiveIssue.issueName || 'Pothole';
       return res.json({
         ok: true,
-        isValid: false,
-        outcome: 'BLOCK_NORMAL_ROAD',
-        title: 'No Issue Found',
-        message: 'No Issue Found. The uploaded image does not show a clearly identifiable civic issue. Please upload an image showing the problem you want to report.',
+        isValid: true,
+        outcome: 'ALLOW',
+        detectedIssue: canonicalName,
+        displayIssueName: canonicalName,
+        confidence: Math.round(maxProb * 100),
       });
     }
 
     // Defect detected - check consistency with description
-    const canonicalName = getCanonicalIssueName(predictedClass);
-    const imgIssue = canonicalName.toLowerCase();
+    const canonicalName = (positiveIssue && positiveIssue.hasIssue) ? positiveIssue.issueName : getCanonicalIssueName(predictedClass);
+    const imgIssue = getCanonicalIssueName(predictedClass).toLowerCase();
 
     // Check conflict: e.g. Streetlight vs Pothole (ensuring negated pothole is not falsely treated as reported defect)
     const isLightingImg = imgIssue.includes('light');
@@ -1177,6 +1220,64 @@ Thank you for helping us maintain public infrastructure in Coimbatore.
 
 Warm regards,
 CivicEye Municipal Administration
+Coimbatore City Municipal Corporation (CCMC)`;
+    } else if (type === 'clarification') {
+      const q = body.clarificationQuestion || body.question || body.statusRemarks || 'Additional details requested.';
+      const inspName = body.inspectorName || body.updatedByName || 'Field Inspector';
+      emailSubject = `[CivicEye] Action Required: Clarification Requested for ${complaintId || 'Complaint'}`;
+      emailBody = `Dear Citizen,
+
+A Field Inspector has reviewed your CivicEye complaint (${complaintId || 'N/A'}) and requested clarification before proceedings can continue.
+
+Clarification Request Details:
+----------------------------------------------------
+• Complaint ID: ${complaintId || 'N/A'}
+• Issue Name: ${issueType || 'Civic Infrastructure Issue'}
+• Assigned Department: ${department}
+• Requesting Inspector: ${inspName}
+• Question / Clarification Needed: ${q}
+• Date & Time: ${formattedTime} (Asia/Kolkata)
+
+Instructions to Respond:
+1. Open the CivicEye mobile application on your device.
+2. Go to "My Complaints" or open the notification for complaint #${complaintId || 'N/A'}.
+3. Review the inspector's query under the Details section.
+4. Type your clarification response and tap "Submit Response".
+
+Your timely response will allow the Field Inspector to complete on-site verification and dispatch repair crews.
+
+Warm regards,
+CivicEye Municipal Administration
+Coimbatore City Municipal Corporation (CCMC)`;
+    } else if (type === 'closure') {
+      const outcome = body.closureOutcome || 'No Major Repair Required';
+      const reason = body.closureReason || body.statusRemarks || 'Inspected on-site; no major intervention needed.';
+      const inspName = body.inspectorName || body.updatedByName || 'Field Inspector';
+      emailSubject = `[CivicEye] Complaint Closed: ${complaintId || 'Complaint'}`;
+      emailBody = `Dear Citizen,
+
+Your CivicEye complaint (${complaintId || 'N/A'}) has been officially closed following an on-site field inspection.
+
+Closure Summary:
+----------------------------------------------------
+• Complaint ID: ${complaintId || 'N/A'}
+• Issue Name: ${issueType || 'Civic Infrastructure Issue'}
+• Final Status: Closed
+• Closure Outcome: ${outcome}
+• Field Inspector: ${inspName}
+• Findings / Inspection Reason: ${reason}
+• Date & Time: ${formattedTime} (Asia/Kolkata)
+
+Additional Notes:
+The field inspection determined that either no structural repair was required at this time, or the matter was addressed during initial review without necessitating a municipal repair assignment.
+
+Instructions:
+You can review the full inspection findings and timestamped audit history in the CivicEye app. If the civic condition changes or a new defect occurs, you are welcome to submit a fresh report anytime.
+
+Thank you for helping keep Coimbatore's infrastructure well-monitored.
+
+Warm regards,
+CivicEye Municipal Services Platform
 Coimbatore City Municipal Corporation (CCMC)`;
     } else {
       // Default: Complaint submission confirmation
@@ -1813,6 +1914,198 @@ app.post('/api/authority-delete-complaint', async (req, res) => {
     });
   } catch (error) {
     console.error('Error in /api/authority-delete-complaint:', error);
+    return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Field Inspector Request Clarification Endpoint
+ */
+app.post('/api/request-clarification', async (req, res) => {
+  try {
+    await ensureBackendAuth();
+    const { complaintId, inspectorId, inspectorName, clarificationQuestion, inspectorRemarks } = req.body || {};
+    if (!complaintId || !clarificationQuestion || !String(clarificationQuestion).trim()) {
+      return res.status(400).json({ ok: false, message: 'complaintId and a non-empty clarificationQuestion are required.' });
+    }
+
+    const docRef = doc(serverDb, 'complaints', complaintId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return res.status(404).json({ ok: false, message: 'Complaint not found.' });
+    }
+    const currentData = snap.data();
+    const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+    const historyItem = {
+      id: `hist-${Date.now()}`,
+      previousStatus: currentData.status || 'Pending Field Verification',
+      newStatus: 'Needs Clarification',
+      updatedBy: inspectorId || 'inspector',
+      updatedByName: inspectorName || 'Field Inspector',
+      remarks: `Field Inspector requested clarification: "${clarificationQuestion.trim()}". ${inspectorRemarks ? `Note: ${inspectorRemarks.trim()}` : ''}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    await updateDoc(docRef, {
+      status: 'Needs Clarification',
+      clarificationRequest: clarificationQuestion.trim(),
+      clarificationRequestedAt: serverTimestamp(),
+      clarificationRequestedBy: inspectorName || 'Field Inspector',
+      clarificationRequestedById: inspectorId || 'inspector',
+      inspectorRemarks: inspectorRemarks?.trim() || currentData.inspectorRemarks || '',
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Send email to citizen
+    if (currentData.citizenEmail) {
+      try {
+        await fetch(`http://localhost:${PORT}/api/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'clarification',
+            complaintId: currentData.complaintId || complaintId,
+            issueType: currentData.issueType || 'Civic Defect',
+            citizenEmail: currentData.citizenEmail,
+            inspectorName: inspectorName || 'Field Inspector',
+            clarificationQuestion: clarificationQuestion.trim(),
+            department: currentData.department || 'Road Maintenance',
+          }),
+        });
+      } catch (emailErr) {
+        console.warn('[CLARIFICATION] Email dispatch warning:', emailErr.message);
+      }
+    }
+
+    return res.status(200).json({ ok: true, message: 'Clarification requested successfully.' });
+  } catch (error) {
+    console.error('Error in /api/request-clarification:', error);
+    return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Citizen Respond Clarification Endpoint
+ */
+app.post('/api/respond-clarification', async (req, res) => {
+  try {
+    await ensureBackendAuth();
+    const { complaintId, citizenId, responseText } = req.body || {};
+    if (!complaintId || !responseText || !String(responseText).trim()) {
+      return res.status(400).json({ ok: false, message: 'complaintId and a non-empty responseText are required.' });
+    }
+
+    const docRef = doc(serverDb, 'complaints', complaintId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return res.status(404).json({ ok: false, message: 'Complaint not found.' });
+    }
+    const currentData = snap.data();
+    const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+    const historyItem = {
+      id: `hist-${Date.now()}`,
+      previousStatus: 'Needs Clarification',
+      newStatus: 'Pending Field Verification',
+      updatedBy: citizenId || currentData.citizenId || 'citizen',
+      updatedByName: currentData.citizenEmail?.split('@')[0] || 'Citizen',
+      remarks: `Citizen provided clarification: "${responseText.trim()}"`,
+      timestamp: new Date().toISOString(),
+    };
+
+    await updateDoc(docRef, {
+      status: 'Pending Field Verification',
+      citizenClarificationResponse: responseText.trim(),
+      citizenClarificationRespondedAt: serverTimestamp(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    return res.status(200).json({ ok: true, message: 'Clarification response recorded successfully.' });
+  } catch (error) {
+    console.error('Error in /api/respond-clarification:', error);
+    return res.status(500).json({ ok: false, message: error.message });
+  }
+});
+
+/**
+ * Field Inspector Close Complaint Endpoint
+ */
+app.post('/api/close-complaint-inspector', async (req, res) => {
+  try {
+    await ensureBackendAuth();
+    const { complaintId, inspectorId, inspectorName, closureReason, closureOutcome, inspectorRemarks } = req.body || {};
+    if (!complaintId || !closureReason || !String(closureReason).trim()) {
+      return res.status(400).json({ ok: false, message: 'complaintId and a non-empty closureReason are required.' });
+    }
+
+    const docRef = doc(serverDb, 'complaints', complaintId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return res.status(404).json({ ok: false, message: 'Complaint not found.' });
+    }
+    const currentData = snap.data();
+    if (currentData.status === 'Closed') {
+      return res.status(400).json({ ok: false, message: 'Complaint is already closed.' });
+    }
+    const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+    const outcome = closureOutcome || 'No Major Repair Required';
+    const historyItem = {
+      id: `hist-${Date.now()}`,
+      previousStatus: currentData.status || 'Pending Field Verification',
+      newStatus: 'Closed',
+      updatedBy: inspectorId || 'inspector',
+      updatedByName: inspectorName || 'Field Inspector',
+      remarks: `Closed by Field Inspector: [${outcome}] ${closureReason.trim()}.${inspectorRemarks?.trim() ? ` Observation: ${inspectorRemarks.trim()}` : ''}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    await updateDoc(docRef, {
+      status: 'Closed',
+      inspectionStatus: 'VALID',
+      inspectionResult: 'genuine',
+      closureReason: closureReason.trim(),
+      closureOutcome: outcome,
+      closedAt: serverTimestamp(),
+      closedBy: inspectorName || 'Field Inspector',
+      closedById: inspectorId || 'inspector',
+      closedByRole: 'field_inspector',
+      inspectedAt: serverTimestamp(),
+      inspectedBy: inspectorId || 'inspector',
+      inspectedByName: inspectorName || 'Field Inspector',
+      inspectorRemarks: inspectorRemarks?.trim() || closureReason.trim(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Send email to citizen
+    if (currentData.citizenEmail) {
+      try {
+        await fetch(`http://localhost:${PORT}/api/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'closure',
+            complaintId: currentData.complaintId || complaintId,
+            issueType: currentData.issueType || 'Civic Defect',
+            citizenEmail: currentData.citizenEmail,
+            inspectorName: inspectorName || 'Field Inspector',
+            closureReason: closureReason.trim(),
+            closureOutcome: outcome,
+            department: currentData.department || 'Road Maintenance',
+          }),
+        });
+      } catch (emailErr) {
+        console.warn('[CLOSURE] Email dispatch warning:', emailErr.message);
+      }
+    }
+
+    return res.status(200).json({ ok: true, message: 'Complaint closed successfully by inspector.' });
+  } catch (error) {
+    console.error('Error in /api/close-complaint-inspector:', error);
     return res.status(500).json({ ok: false, message: error.message });
   }
 });

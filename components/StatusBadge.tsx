@@ -88,6 +88,13 @@ const STATUS_CONFIG: Record<
     icon: '✕',
     borderColor: '#FECACA',
   },
+  'Needs Clarification': {
+    bg: '#FFFBEB',
+    text: '#B45309',
+    label: 'Needs Clarification',
+    icon: '❓',
+    borderColor: '#FDE68A',
+  },
   'Dissimilar Image to the Issue': {
     bg: '#FEF2F2',
     text: '#DC2626',

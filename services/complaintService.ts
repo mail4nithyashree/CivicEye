@@ -57,6 +57,7 @@ export type ComplaintStatus =
   | 'Citizen Verification'
   | 'Closed'
   | 'Rejected'
+  | 'Needs Clarification'
   | 'Dissimilar Image to the Issue'
   | 'Invalid Issue image, raise the complaint with the appropriate image!'
   | 'Invalid Image, give valid Issue Image!'
@@ -283,6 +284,22 @@ export interface Complaint {
   // Citizen Final Verification
   citizenVerification?: CitizenVerificationDetails;
 
+  // Clarification Workflow
+  clarificationRequest?: string;
+  clarificationRequestedAt?: Date;
+  clarificationRequestedBy?: string;
+  clarificationRequestedById?: string;
+  citizenClarificationResponse?: string;
+  citizenClarificationRespondedAt?: Date;
+
+  // Closure Workflow
+  closureReason?: string;
+  closureOutcome?: string;
+  closedAt?: Date;
+  closedBy?: string;
+  closedById?: string;
+  closedByRole?: string;
+
   // Audit & Deletion History
   statusHistory?: StatusHistoryItem[];
   isDeleted?: boolean;
@@ -348,6 +365,20 @@ export interface NewComplaintData {
   fieldVerificationStatus?: FieldVerificationStatus;
   status?: ComplaintStatus;
   inspectionStatus?: InspectionStatus;
+
+  // Clarification & Closure fields
+  clarificationRequest?: string;
+  clarificationRequestedAt?: Date;
+  clarificationRequestedBy?: string;
+  clarificationRequestedById?: string;
+  citizenClarificationResponse?: string;
+  citizenClarificationRespondedAt?: Date;
+  closureReason?: string;
+  closureOutcome?: string;
+  closedAt?: Date;
+  closedBy?: string;
+  closedById?: string;
+  closedByRole?: string;
   rejectionReason?: string;
   rejectionType?: string;
   rejectedAt?: Date;
@@ -643,6 +674,20 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     rejectedAt: parseDate(data.rejectedAt),
 
     citizenVerification,
+    clarificationRequest: data.clarificationRequest,
+    clarificationRequestedAt: parseDate(data.clarificationRequestedAt),
+    clarificationRequestedBy: data.clarificationRequestedBy,
+    clarificationRequestedById: data.clarificationRequestedById,
+    citizenClarificationResponse: data.citizenClarificationResponse,
+    citizenClarificationRespondedAt: parseDate(data.citizenClarificationRespondedAt),
+
+    closureReason: data.closureReason,
+    closureOutcome: data.closureOutcome,
+    closedAt: parseDate(data.closedAt),
+    closedBy: data.closedBy,
+    closedById: data.closedById,
+    closedByRole: data.closedByRole,
+
     statusHistory,
 
     isDeleted: !!data.isDeleted,
@@ -855,6 +900,96 @@ export async function sendComplaintDeletionEmail(params: {
     return false;
   } catch (error) {
     console.warn('[complaintService] Deletion email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch clarification email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendClarificationEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  inspectorName?: string;
+  clarificationQuestion: string;
+  department?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'clarification',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        inspectorName: params.inspectorName || 'Field Inspector',
+        clarificationQuestion: params.clarificationQuestion,
+        department: params.department || 'Road Maintenance',
+        newStatus: 'Needs Clarification',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Clarification email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Clarification email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch closure email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendClosureEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  inspectorName?: string;
+  closureReason: string;
+  closureOutcome?: string;
+  inspectorRemarks?: string;
+  department?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'closure',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        inspectorName: params.inspectorName || 'Field Inspector',
+        closureReason: params.closureReason,
+        closureOutcome: params.closureOutcome || 'No Major Repair Required',
+        statusRemarks: params.inspectorRemarks || params.closureReason,
+        department: params.department || 'Road Maintenance',
+        newStatus: 'Closed',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Closure email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Closure email error (handled safely):', error);
     return false;
   }
 }
@@ -1758,6 +1893,306 @@ export async function markComplaintAsValid(
 }
 
 /**
+ * Field Inspector requests clarification from the citizen.
+ * Records the clarification question and moves status to 'Needs Clarification'.
+ */
+export async function requestClarificationByInspector(
+  complaintId: string,
+  inspectorId: string,
+  inspectorName: string,
+  clarificationQuestion: string,
+  inspectorRemarks?: string
+): Promise<void> {
+  if (!clarificationQuestion || !clarificationQuestion.trim()) {
+    throw new Error('A specific clarification question is required.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (isInvalidImageComplaint(currentData)) {
+    throw new Error('Action blocked: Complaint was rejected due to Invalid Issue image, raise the complaint with the appropriate image!');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: currentData.status || 'Pending Field Verification',
+    newStatus: 'Needs Clarification',
+    updatedBy: inspectorId,
+    updatedByName: inspectorName,
+    remarks: `Field Inspector requested clarification: "${clarificationQuestion.trim()}". ${inspectorRemarks?.trim() ? `Note: ${inspectorRemarks.trim()}` : ''}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Needs Clarification' as ComplaintStatus,
+      clarificationRequest: clarificationQuestion.trim(),
+      clarificationRequestedAt: serverTimestamp(),
+      clarificationRequestedBy: inspectorName,
+      clarificationRequestedById: inspectorId,
+      inspectorRemarks: inspectorRemarks?.trim() || currentData.inspectorRemarks || '',
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Notify citizen in-app
+    if (currentData.citizenId) {
+      try {
+        await createNotification({
+          userId: currentData.citizenId,
+          recipientRole: 'citizen',
+          complaintId,
+          title: 'Clarification Needed for Your Complaint',
+          message: `Field Inspector ${inspectorName} requested clarification on #${currentData.complaintId || complaintId}: "${clarificationQuestion.trim()}". Please open CivicEye to provide details.`,
+          type: 'clarification_requested',
+        });
+      } catch (notifErr) {
+        console.warn('[complaintService] Clarification notification error (handled safely):', notifErr);
+      }
+    }
+
+    // Notify citizen via email
+    if (currentData.citizenEmail) {
+      sendClarificationEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        inspectorName,
+        clarificationQuestion: clarificationQuestion.trim(),
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+      }).catch(err => {
+        console.warn('[complaintService] Clarification email dispatch warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing clarification request via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/request-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          inspectorId,
+          inspectorName,
+          clarificationQuestion: clarificationQuestion.trim(),
+          inspectorRemarks: inspectorRemarks?.trim() || '',
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend request clarification failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
+ * Citizen responds to Field Inspector's clarification request.
+ * Sets status back to 'Pending Field Verification' so inspection can resume.
+ */
+export async function respondToClarificationByCitizen(
+  complaintId: string,
+  citizenId: string,
+  responseText: string
+): Promise<void> {
+  if (!responseText || !responseText.trim()) {
+    throw new Error('Clarification response cannot be empty.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (currentData.citizenId && currentData.citizenId !== citizenId) {
+    throw new Error('Only the citizen who submitted this complaint can submit a clarification response.');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: 'Needs Clarification',
+    newStatus: 'Pending Field Verification',
+    updatedBy: citizenId,
+    updatedByName: currentData.citizenEmail?.split('@')[0] || 'Citizen',
+    remarks: `Citizen provided clarification: "${responseText.trim()}"`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Pending Field Verification' as ComplaintStatus,
+      citizenClarificationResponse: responseText.trim(),
+      citizenClarificationRespondedAt: serverTimestamp(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Notify Field Inspector / Officer in-app
+    try {
+      await createNotification({
+        recipientRole: 'authority',
+        complaintId,
+        title: 'Citizen Clarification Submitted',
+        message: `Clarification provided by citizen for #${currentData.complaintId || complaintId}: "${responseText.trim()}"`,
+        type: 'citizen_feedback',
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Citizen response notification error (handled safely):', notifErr);
+    }
+
+    // Notify citizen via email
+    if (currentData.citizenEmail) {
+      sendStatusUpdateEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        previousStatus: 'Needs Clarification',
+        newStatus: 'Pending Field Verification',
+        statusRemarks: `Your clarification response was received: "${responseText.trim()}". Field Inspector will re-evaluate on-site.`,
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+        updatedByName: 'CivicEye System',
+      }).catch(err => {
+        console.warn('[complaintService] Clarification response acknowledgement email warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing citizen clarification response via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/respond-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          citizenId,
+          responseText: responseText.trim(),
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend respond clarification failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
+ * Field Inspector officially closes a complaint that requires no serious repair,
+ * has minor defect handled, or is resolved on inspection without repair assignment.
+ */
+export async function closeComplaintByInspector(
+  complaintId: string,
+  inspectorId: string,
+  inspectorName: string,
+  closureReason: string,
+  closureOutcome: string = 'No Major Repair Required',
+  inspectorRemarks?: string
+): Promise<void> {
+  if (!closureReason || !closureReason.trim()) {
+    throw new Error('A clear closure reason is required to close a complaint.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (currentData.status === 'Closed') {
+    throw new Error('Complaint is already closed.');
+  }
+  if (isInvalidImageComplaint(currentData)) {
+    throw new Error('Action blocked: Complaint was rejected due to Invalid Issue image, raise the complaint with the appropriate image!');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: currentData.status || 'Pending Field Verification',
+    newStatus: 'Closed',
+    updatedBy: inspectorId,
+    updatedByName: inspectorName,
+    remarks: `Closed by Field Inspector: [${closureOutcome}] ${closureReason.trim()}.${inspectorRemarks?.trim() ? ` Observations: ${inspectorRemarks.trim()}` : ''}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Closed' as ComplaintStatus,
+      inspectionStatus: 'VALID' as InspectionStatus,
+      inspectionResult: 'genuine',
+      closureReason: closureReason.trim(),
+      closureOutcome,
+      closedAt: serverTimestamp(),
+      closedBy: inspectorName,
+      closedById: inspectorId,
+      closedByRole: 'field_inspector',
+      inspectedAt: serverTimestamp(),
+      inspectedBy: inspectorId,
+      inspectedByName: inspectorName,
+      inspectorRemarks: inspectorRemarks?.trim() || closureReason.trim(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // In-app notification to citizen
+    if (currentData.citizenId) {
+      try {
+        await createNotification({
+          userId: currentData.citizenId,
+          recipientRole: 'citizen',
+          complaintId,
+          title: `Complaint Closed: ${closureOutcome}`,
+          message: `Your complaint #${currentData.complaintId || complaintId} was inspected by Field Inspector ${inspectorName} and closed: "${closureReason.trim()}".`,
+          type: 'work_resolved',
+        });
+      } catch (notifErr) {
+        console.warn('[complaintService] Closure notification error (handled safely):', notifErr);
+      }
+    }
+
+    // Email notification to citizen
+    if (currentData.citizenEmail) {
+      sendClosureEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        inspectorName,
+        closureReason: closureReason.trim(),
+        closureOutcome,
+        inspectorRemarks: inspectorRemarks?.trim() || '',
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+      }).catch(err => {
+        console.warn('[complaintService] Closure email dispatch warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing inspector closure via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/close-complaint-inspector`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          inspectorId,
+          inspectorName,
+          closureReason: closureReason.trim(),
+          closureOutcome,
+          inspectorRemarks: inspectorRemarks?.trim() || '',
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend closure failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
  * Admin officially routes/assigns the verified complaint to the responsible maintenance authority.
  */
 export async function assignToAuthority(
@@ -2139,7 +2574,7 @@ export function subscribeToAssignedComplaints(
           // Inspected by this inspector
           if (c.inspectedBy === inspectorId || c.inspectionDetails?.inspectedBy === inspectorId) return true;
           // Unassigned and pending field inspection / verification
-          if (!c.assignedInspectorId && (c.status === 'Pending Field Verification' || c.status === 'Submitted' || c.status === 'Verified')) return true;
+          if (!c.assignedInspectorId && (c.status === 'Pending Field Verification' || c.status === 'Submitted' || c.status === 'Verified' || c.status === 'Needs Clarification')) return true;
 
           return false;
         })

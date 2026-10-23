@@ -39,10 +39,13 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
   'Pothole':                 { name: 'Road Maintenance', code: 'ROAD' },
   'Alligator Cracking':      { name: 'Road Maintenance', code: 'ROAD' },
   'Road Cracking':           { name: 'Road Maintenance', code: 'ROAD' },
+  'Road Crack':              { name: 'Road Maintenance', code: 'ROAD' },
   'Road Divider Damage':     { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'Damaged Traffic Sign':    { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'Streetlight Fault':       { name: 'Street Lighting Department', code: 'LIGHTING' },
+  'Street Light Fault':      { name: 'Street Lighting Department', code: 'LIGHTING' },
   'Damaged Manhole':         { name: 'Sewerage', code: 'SEWER' },
+  'Manhole Defect':          { name: 'Sewerage', code: 'SEWER' },
   'Damaged Footpath':        { name: 'Public Works Department', code: 'PWD' },
   'Road Debris / Obstruction': { name: 'Solid Waste Management', code: 'SWM' },
   'Road Surface Defect':     { name: 'Road Maintenance', code: 'ROAD' },
@@ -83,7 +86,6 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
   'missing signage':         { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'Road Divider Issue':      { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'Signage / Signal Fault':  { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
-  'Street Light Fault':      { name: 'Street Lighting Department', code: 'LIGHTING' },
   'Street Light Defect':     { name: 'Street Lighting Department', code: 'LIGHTING' },
   'Other':                   { name: 'Road Maintenance', code: 'ROAD' },
 };
@@ -299,6 +301,11 @@ export const DEPARTMENTS_CONFIG: Record<string, DepartmentDefinition> = {
     routingMessageName: 'Street Lighting Department',
     description: 'Street lights, non-functional luminaires, damaged poles, and hanging power wires',
     keywords: [
+      'the streetlight is not working',
+      'the street light is not working',
+      'streetlight is not working',
+      'street light is not working',
+      'streetlight not working',
       'street light fault',
       'street light broken',
       'street light not working',
@@ -438,6 +445,10 @@ export const DEPARTMENTS_CONFIG: Record<string, DepartmentDefinition> = {
       'stagnant water',
       'water stagnation',
       'rainwater accumulation',
+      'water is accumulating',
+      'water accumulating',
+      'accumulating water',
+      'water accumulation',
       'waterlogging',
       'water logging',
       'flooded street',
@@ -518,6 +529,15 @@ export const DEPARTMENTS_CONFIG: Record<string, DepartmentDefinition> = {
       'manhole is blocked',
       'blocked manhole',
       'clogged manhole',
+      'the manhole cover is broken',
+      'manhole cover is broken',
+      'manhole cover is damaged',
+      'damaged manhole cover',
+      'broken manhole cover',
+      'manhole defect',
+      'broken manhole',
+      'damaged manhole',
+      'manhole cover',
       'sewer manhole',
       'sewage manhole',
       'sewage leakage',
@@ -993,7 +1013,7 @@ export function classifyDepartmentFromDescription(
   const drainConfig = DEPARTMENTS_CONFIG['DRAIN'];
   if (drainConfig) {
     const isDrinkingWater = /\b(drinking water|water supply|water pipe|water pipeline|pipeline leak|low water pressure|tap water)\b/i.test(normalizedText);
-    const hasExplicitDrain = /\b(storm\s*water|stormwater|drainage|rainwater|rain\s*water|waterlogg?ing|open drain|drain cover|flooded drain|clogged|blocked drain|drain blockage)\b/i.test(normalizedText);
+    const hasExplicitDrain = /\b(storm\s*water|stormwater|drainage|rainwater|rain\s*water|waterlogg?ing|water\s*accumulat\w+|accumulating\s*water|stagnant\s*water|water\s*stagnation|open drain|drain cover|flooded drain|clogged|blocked drain|drain blockage)\b/i.test(normalizedText);
 
     if (!isDrinkingWater || hasExplicitDrain) {
       const sortedDrainKeywords = [...drainConfig.keywords].sort((a, b) => b.length - a.length);
@@ -1021,7 +1041,7 @@ export function classifyDepartmentFromDescription(
   if (lightingConfig) {
     const sortedKeywords = [...lightingConfig.keywords].sort((a, b) => b.length - a.length);
     for (const keyword of sortedKeywords) {
-      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\  // 4. Check Public Building Maintenance')}`, 'i');
+      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
       if (regex.test(normalizedText)) {
         return {
           department: lightingConfig.name,
@@ -1043,7 +1063,7 @@ export function classifyDepartmentFromDescription(
   if (safetyConfig) {
     const sortedKeywords = [...safetyConfig.keywords].sort((a, b) => b.length - a.length);
     for (const keyword of sortedKeywords) {
-      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\  // 4. Check Public Building Maintenance')}`, 'i');
+      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
       if (regex.test(normalizedText)) {
         return {
           department: safetyConfig.name,

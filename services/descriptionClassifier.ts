@@ -1,5 +1,8 @@
 import {
   classifyDepartmentFromDescription,
+  getDepartmentForIssue,
+  getRoutingStatus,
+  getRoutingMessage,
   type DepartmentClassificationResult,
 } from './departmentMapping.ts';
 
@@ -15,6 +18,7 @@ export interface DescriptionClassificationResult {
   confidence: number;
   confidenceRaw: number;
   confidenceType: 'description_heuristic';
+  confidenceBand: 'LOW' | 'MEDIUM' | 'HIGH';
   department: string;
   departmentCode: string;
   routingStatus: string;
@@ -52,6 +56,10 @@ export function normalizeDescriptionText(text: string): string {
  */
 function hasActiveHighSeverityTerms(normalized: string): { hasHigh: boolean; matchedTerm?: string } {
   const highTerms = [
+    'immediate attention',
+    'immediate repair',
+    'safety risk',
+    'urgent',
     'danger',
     'dangerous',
     'hazard',
@@ -68,6 +76,8 @@ function hasActiveHighSeverityTerms(normalized: string): { hasHigh: boolean; mat
     'injury',
     'bike fell',
     'fall risk',
+    'deep',
+    'huge',
   ];
 
   // Negation prefixes
@@ -132,6 +142,7 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Pothole',
     keywords: [
+      'major pothole',
       'deep pothole',
       'large pothole',
       'huge pothole',
@@ -153,6 +164,9 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Road Crack',
     keywords: [
+      'several dangerous cracks',
+      'dangerous cracks',
+      'small crack',
       'long crack',
       'long cracks',
       'road has long cracks',
@@ -205,6 +219,7 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Street Light Fault',
     keywords: [
+      'the streetlight is not working',
       'streetlight is not working',
       'street light is not working',
       'light is not working',
@@ -228,6 +243,8 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Damaged Manhole',
     keywords: [
+      'the manhole cover is broken',
+      'manhole cover is broken',
       'manhole cover is damaged',
       'damaged manhole cover',
       'broken manhole cover',
@@ -246,6 +263,7 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Garbage Overflow',
     keywords: [
+      'garbage is overflowing near the road',
       'garbage is overflowing',
       'overflowing garbage',
       'garbage overflow',
@@ -265,6 +283,7 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Drainage Blockage',
     keywords: [
+      'the drainage is blocked',
       'drainage is blocked',
       'drain is blocked',
       'drainage blocked',
@@ -313,6 +332,7 @@ const CIVIC_CATEGORIES: CategoryDef[] = [
   {
     canonicalName: 'Damaged Traffic Sign',
     keywords: [
+      'the traffic sign is damaged',
       'traffic sign is damaged',
       'damaged traffic sign',
       'traffic sign',
@@ -398,6 +418,7 @@ export function classifyComplaintFromDescription(description: string): Descripti
       confidence: 0,
       confidenceRaw: 0,
       confidenceType: 'description_heuristic',
+      confidenceBand: 'LOW',
       department: 'Road Maintenance',
       departmentCode: 'ROAD',
       routingStatus: 'Direct',
@@ -462,6 +483,7 @@ export function classifyComplaintFromDescription(description: string): Descripti
       confidence: 0,
       confidenceRaw: 0,
       confidenceType: 'description_heuristic',
+      confidenceBand: 'LOW',
       department: deptResult.department || 'Road Maintenance',
       departmentCode: deptResult.departmentCode || 'ROAD',
       routingStatus: deptResult.routingStatus || 'Direct',
@@ -469,41 +491,131 @@ export function classifyComplaintFromDescription(description: string): Descripti
     };
   }
 
-  // 3. Determine Severity and Priority according to user specifications:
-  // | Description indicators                                            | Severity / priority | Displayed confidence range |
-  // | Risk, danger, hazard, or major                                    | HIGH                | 85%–100%                   |
-  // | Medium or minor                                                   | MEDIUM              | 45%–85% (46%–84%)          |
-  // | Small or straightforward mention without higher-severity indicator | LOW                 | 0%–45% (15%–45%)           |
-
+  // 3. Determine Priority & Severity independently from Confidence
   const { hasHigh, matchedTerm: highTerm } = hasActiveHighSeverityTerms(normalized);
   const { hasMedium, matchedTerm: medTerm } = hasMediumSeverityTerms(normalized);
 
-  const hash = hashDescription(normalized);
   let severity: 'LOW' | 'MEDIUM' | 'HIGH';
   let priority: 'LOW' | 'MEDIUM' | 'HIGH';
   let priorityReason: string;
-  let confidence: number;
 
   if (hasHigh) {
     severity = 'HIGH';
     priority = 'HIGH';
     priorityReason = `High: Urgent safety hazard or critical indicator ("${highTerm}") detected in description.`;
-    // Range 85%–100% deterministically
-    confidence = 85 + (hash % 16); // 85 to 100
+  } else if (normalized.includes('small') || normalized.includes('slight') || normalized.includes('minor crack')) {
+    severity = 'LOW';
+    priority = 'LOW';
+    priorityReason = 'Low: Small defect reported with minimal immediate traffic or safety risk.';
   } else if (hasMedium) {
     severity = 'MEDIUM';
     priority = 'MEDIUM';
     priorityReason = `Medium: Moderate/minor severity indicator ("${medTerm}") detected; scheduled maintenance recommended.`;
-    // Range 46%–84% deterministically (>45 and <85)
-    confidence = 46 + (hash % 39); // 46 to 84
   } else {
-    severity = 'LOW';
-    priority = 'LOW';
-    priorityReason = normalized.includes('small')
-      ? 'Low: Small defect reported with minimal immediate traffic or safety risk.'
-      : 'Low: Standard defect mention without higher-severity indicators.';
-    // Range 15%–45% deterministically (0%–45%)
-    confidence = 15 + (hash % 31); // 15 to 45
+    // Default standard defect mention
+    severity = 'MEDIUM';
+    priority = 'MEDIUM';
+    priorityReason = `Medium: Standard ${matchedCategory} defect reported; scheduled repair recommended.`;
+  }
+
+  // 4. Calculate Dynamic Description Confidence (0–100%) independently from Priority
+  const isCompound = highestKeywordLength >= 12;
+  const hash = hashDescription(normalized);
+
+  // Base score from match type
+  let baseScore = 60;
+  if (isCompound) {
+    baseScore = 76; // Strong multi-word compound phrase (e.g. "deep pothole near", "road has long cracks", "water is accumulating")
+  } else if (highestKeywordLength >= 7) {
+    baseScore = 68; // Distinctive primary category term (e.g. "pothole", "manhole", "waterlogging", "footpath")
+  } else {
+    baseScore = 52; // Generic or short keyword (e.g. "crack", "drain", "trash")
+  }
+
+  // Count reinforcing terms within the matched category
+  const activeCat = CIVIC_CATEGORIES.find((c) => c.canonicalName === matchedCategory);
+  let reinforcementCount = 0;
+  if (activeCat) {
+    for (const kw of activeCat.keywords) {
+      const regex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (regex.test(normalized)) {
+        reinforcementCount++;
+      }
+    }
+  }
+  const reinforcementBonus = Math.min(12, Math.max(0, (reinforcementCount - 1) * 6));
+
+  // Civic infrastructure & location context bonus
+  const contextTerms = [
+    'road', 'street', 'main road', 'highway', 'lane', 'path', 'avenue',
+    'junction', 'entrance', 'cross', 'corner', 'near', 'beside', 'outside',
+    'bus stop', 'area', 'location', 'sector', 'block', 'ward', 'colony'
+  ];
+  let contextBonus = 0;
+  for (const ct of contextTerms) {
+    if (new RegExp(`\\b${ct}\\b`, 'i').test(normalized)) {
+      contextBonus = 8;
+      break;
+    }
+  }
+
+  // Detail & word count bonus
+  const words = normalized.split(/\s+/).filter(Boolean);
+  let wordCountBonus = 0;
+  if (words.length >= 8) {
+    wordCountBonus = 8;
+  } else if (words.length >= 5) {
+    wordCountBonus = 5;
+  } else if (words.length <= 2 && !isCompound) {
+    wordCountBonus = -16;
+  }
+
+  // Cross-category ambiguity penalty
+  let otherCategoryMatches = 0;
+  for (const cat of CIVIC_CATEGORIES) {
+    if (cat.canonicalName !== matchedCategory) {
+      for (const kw of cat.keywords) {
+        if (kw.length >= 5 && new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(normalized)) {
+          otherCategoryMatches++;
+          break;
+        }
+      }
+    }
+  }
+  const ambiguityPenalty = otherCategoryMatches > 0 ? 18 : 0;
+
+  // Uncertainty / hedging penalty
+  const uncertaintyRegex = /\b(maybe|might\s*be|looks\s*like|not\s*sure|possibly|perhaps)\b/i;
+  const uncertaintyPenalty = uncertaintyRegex.test(normalized) ? 14 : 0;
+
+  // Add deterministic text-based jitter (-3 to +3) so different descriptions get distinct scores
+  const jitter = (hash % 7) - 3;
+  let rawScore = Math.round(baseScore + reinforcementBonus + contextBonus + wordCountBonus - ambiguityPenalty - uncertaintyPenalty + jitter);
+
+  // Bound to [15, 98]
+  const confidence = Math.max(15, Math.min(98, rawScore));
+
+  let confidenceBand: 'LOW' | 'MEDIUM' | 'HIGH';
+  if (confidence >= 85) {
+    confidenceBand = 'HIGH';
+  } else if (confidence > 45) {
+    confidenceBand = 'MEDIUM';
+  } else {
+    confidenceBand = 'LOW';
+  }
+
+  const deptInfo = getDepartmentForIssue(matchedCategory);
+  let finalDepartment = deptResult.department || deptInfo.name || 'Road Maintenance';
+  let finalDepartmentCode = deptResult.departmentCode || deptInfo.code || 'ROAD';
+  let finalRoutingStatus = deptResult.routingStatus || getRoutingStatus(finalDepartmentCode);
+  let finalRoutingMessage = deptResult.routingMessage || getRoutingMessage(finalDepartmentCode);
+
+  // If department classifier defaulted to ROAD or had no match, but the canonical category explicitly maps to a dedicated non-road department, route to canonical department
+  if ((finalDepartmentCode === 'ROAD' || !finalDepartmentCode) && deptInfo.code && deptInfo.code !== 'ROAD') {
+    finalDepartment = deptInfo.name;
+    finalDepartmentCode = deptInfo.code;
+    finalRoutingStatus = getRoutingStatus(deptInfo.code);
+    finalRoutingMessage = getRoutingMessage(deptInfo.code);
   }
 
   return {
@@ -518,10 +630,11 @@ export function classifyComplaintFromDescription(description: string): Descripti
     confidence,
     confidenceRaw: confidence / 100,
     confidenceType: 'description_heuristic',
-    department: deptResult.department || 'Road Maintenance',
-    departmentCode: deptResult.departmentCode || 'ROAD',
-    routingStatus: deptResult.routingStatus || 'Direct',
-    routingMessage: deptResult.routingMessage,
+    confidenceBand,
+    department: finalDepartment,
+    departmentCode: finalDepartmentCode,
+    routingStatus: finalRoutingStatus,
+    routingMessage: finalRoutingMessage,
   };
 }
 

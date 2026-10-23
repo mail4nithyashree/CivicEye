@@ -19,7 +19,7 @@ import {
   isRoadDepartment,
 } from '@/services/departmentMapping';
 import { analyzeCivicImage, validateImageQuality, type AnalysisResult } from '@/services/imageAnalysis';
-import { classifyComplaintFromDescription } from '@/services/descriptionClassifier';
+import { classifyComplaintFromDescription, checkDescriptionHasNoIssue } from '@/services/descriptionClassifier';
 import { validateComplaintSubmission, type ImageDescriptionValidationResult } from '@/services/imageDescriptionValidator';
 import { useAppTheme } from '@/context/ThemeContext';
 import { formatDisplayIssueName } from '@/services/predictionContract';
@@ -265,10 +265,6 @@ export default function ReportScreen() {
   async function handleAnalyze() {
     if (step === 'checking' || step === 'analyzing' || submitting) return;
 
-    if (!imageUri) {
-      Alert.alert('Image Required', 'Please select or capture an image of the civic issue.');
-      return;
-    }
     if (!description.trim()) {
       Alert.alert('Description Required', 'Please describe the issue briefly (e.g., pothole, road crack, waterlogging).');
       return;
@@ -280,26 +276,24 @@ export default function ReportScreen() {
 
     console.log('[SUBMIT] Description:', description);
     console.log('[SUBMIT] Image URI:', imageUri);
-    console.log('[SUBMIT] Starting Image & Description validation gate');
+    console.log('[SUBMIT] Processing issue completely from citizen description');
 
     setStep('checking');
     setValidationRejection(null);
 
     try {
-      // 1. Separate Image-Description Validation Stage
-      const validationResult = await validateComplaintSubmission(imageUri, description.trim());
-      if (!validationResult.isValid) {
-        console.log('[ANALYZE] Validation blocked submission with outcome:', validationResult.outcome);
-        setValidationRejection({
-          title: validationResult.rejectionTitle || 'Invalid Submission',
-          message: validationResult.rejectionMessage || 'The uploaded image does not match the reported civic issue.',
-          outcome: validationResult.outcome,
-        });
-        setStep('rejected');
+      // 1. Description validation: Check if citizen explicitly reported no issue
+      const noIssueCheck = checkDescriptionHasNoIssue(description.trim());
+      if (noIssueCheck.isNoIssue) {
+        Alert.alert(
+          'No Issue Found',
+          'Your description does not report an active civic problem. Please describe the problem you would like to report (e.g., pothole, road crack, waterlogging).'
+        );
+        setStep('form');
         return;
       }
 
-      // 2. Primary Classification from Citizen Description (Preserved existing implementation!)
+      // 2. Authoritative Classification from Citizen Description
       const descClassification = classifyComplaintFromDescription(description.trim());
       if (descClassification.requiresClarification) {
         Alert.alert(
@@ -319,7 +313,7 @@ export default function ReportScreen() {
         routingStatus: descClassification.routingStatus,
       });
 
-      console.log(`[ANALYZE] Validated! Description category: ${canonicalIssueName}, Severity: ${descClassification.severity}, Confidence: ${descClassification.confidence}%`);
+      console.log(`[ANALYZE] Classified from description: ${canonicalIssueName}, Priority: ${descClassification.priority}, Confidence: ${descClassification.confidence}% (${descClassification.confidenceBand})`);
 
       // Log analysis record to Firestore
       await logAnalysisRecord({
@@ -359,8 +353,8 @@ export default function ReportScreen() {
     } catch (err: any) {
       console.log('[ANALYZE] Analysis error details:', err);
       Alert.alert(
-        'Validation Error',
-        err?.message || 'Unable to validate complaint right now. Please verify your photo and description and try again.'
+        'Processing Error',
+        err?.message || 'Unable to process description right now. Please try again.'
       );
       setStep('form');
     }
@@ -368,7 +362,7 @@ export default function ReportScreen() {
 
   async function handleSubmit() {
     if (submitting || step === 'checking' || step === 'analyzing') return;
-    if (!analysis || !location || !user || !imageUri) return;
+    if (!analysis || !location || !user) return;
 
     setSubmitting(true);
 
@@ -378,7 +372,15 @@ export default function ReportScreen() {
     console.log('[SUBMIT] Starting complaint submission');
 
     try {
-      const cloudinaryUrl = await uploadComplaintImage(imageUri);
+      let cloudinaryUrl = '';
+      if (imageUri) {
+        try {
+          cloudinaryUrl = await uploadComplaintImage(imageUri);
+        } catch (uploadErr) {
+          console.warn('[SUBMIT] Image upload issue, using local URI:', uploadErr);
+          cloudinaryUrl = imageUri;
+        }
+      }
       const classifiedDept = classifyDepartmentFromDescription(description.trim(), analysis.department);
       const isRoad = isRoadDepartment(classifiedDept);
       const isCleanRoadRequested = analysis.issueType === 'Road Surface (Inspection Requested)';
@@ -396,16 +398,16 @@ export default function ReportScreen() {
       const submitPriority = (isNoMajorIssue || isCleanRoadRequested || analysis.priority === 'NONE') ? 'NONE' : (analysis.priority || 'MEDIUM');
       const submitConfidence = analysis.confidence ?? 0;
       const submitConfidenceRaw = analysis.confidenceRaw ?? (submitConfidence > 0 ? submitConfidence / 100 : 0);
-      const submitConfidenceType = analysis.confidenceType || 'model_calibrated_probability';
+      const submitConfidenceType = analysis.confidenceType || 'description_heuristic';
       const submitPredictionState = analysis.predictionState || (isNoMajorIssue ? 'NO_MAJOR_ISSUE' : 'VALID_ISSUE');
       const submitPredictedClass = analysis.predictedClass || (isNoMajorIssue ? null : canonicalDisplayIssue);
-      const submitPriorityReason = analysis.priorityReason || (isNoMajorIssue ? 'Normal clean road surface verified.' : `${submitPriority} priority assessed for ${canonicalDisplayIssue}.`);
-      const submitModelVersion = analysis.modelVersion || 'CivicEye-Vision-Engine-v3';
+      const submitPriorityReason = analysis.priorityReason || `${submitPriority} priority assessed for ${canonicalDisplayIssue}.`;
+      const submitModelVersion = analysis.modelVersion || 'CivicEye-Description-Classifier-v1';
 
       const submitResult = await submitComplaint({
         citizenId: user.uid,
         citizenEmail: user.email ?? '',
-        imageUri: cloudinaryUrl,
+        imageUri: cloudinaryUrl || imageUri || '',
         predictionContract: analysis.predictionContract,
         description: description.trim(),
         latitude: location.lat,
@@ -1259,7 +1261,7 @@ export default function ReportScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
                 <Ionicons name="sparkles" size={14} color="#059669" />
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#047857' }}>
-                  Confidence: {analysis.confidence}%
+                  Confidence: {analysis.confidence}% ({analysis.confidence >= 85 ? 'High' : analysis.confidence > 45 ? 'Medium' : 'Low'})
                 </Text>
                 <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                   <Text style={{ fontSize: 10, color: colors.textPrimary, fontWeight: '600' }}>Description Assessment</Text>

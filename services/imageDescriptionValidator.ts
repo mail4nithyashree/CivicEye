@@ -15,12 +15,11 @@
  * - No notifications or emails sent
  */
 
-import { validateImageQuality } from './imageAnalysis';
-import { runVisionInference, type VisionInferenceResult } from './visionInference';
+import type { VisionInferenceResult } from './visionInference.ts';
 import {
   checkDescriptionHasNoIssue,
   classifyComplaintFromDescription,
-} from './descriptionClassifier';
+} from './descriptionClassifier.ts';
 
 export type ValidationOutcome =
   | 'ALLOW'
@@ -140,113 +139,19 @@ export async function validateComplaintSubmission(
     };
   }
 
-  // 2. Check Image Quality and Integrity (Outcome F)
-  const quality = await validateImageQuality(imageUri);
-  if (!quality.isValid || quality.isBlurryOrUnreadable) {
-    console.log('[VALIDATION] Blocked: Image unreadable or blurry.');
-    return {
-      isValid: false,
-      outcome: 'BLOCK_UNREADABLE_IMAGE',
-      rejectionTitle: VALIDATION_MESSAGES.UNREADABLE_IMAGE.title,
-      rejectionMessage: quality.errorMessage || VALIDATION_MESSAGES.UNREADABLE_IMAGE.message,
-    };
-  }
-
-  // 3. Run Visual Inference Model for Scene Relevance & Defect Evidence
-  let visionResult: VisionInferenceResult;
-  try {
-    visionResult = await runVisionInference(imageUri, descTrimmed);
-  } catch (err: any) {
-    console.warn('[VALIDATION] Vision inference error, rejecting safely:', err?.message || err);
-    return {
-      isValid: false,
-      outcome: 'BLOCK_UNREADABLE_IMAGE',
-      rejectionTitle: VALIDATION_MESSAGES.UNREADABLE_IMAGE.title,
-      rejectionMessage: 'Unable to evaluate the image. Please upload a clear photo of the civic issue and try again.',
-    };
-  }
-
-  // 4. Evaluate Image Physical Clarity (Outcome F)
-  if (visionResult.isClear === false || visionResult.predictionState === 'UNCLEAR_IMAGE') {
-    console.log('[VALIDATION] Blocked: Image evaluated as physically unclear or corrupted.');
-    return {
-      isValid: false,
-      outcome: 'BLOCK_UNREADABLE_IMAGE',
-      rejectionTitle: VALIDATION_MESSAGES.UNREADABLE_IMAGE.title,
-      rejectionMessage: visionResult.message || VALIDATION_MESSAGES.UNREADABLE_IMAGE.message,
-      inferenceResult: visionResult,
-    };
-  }
-
-  // 5. Evaluate Visual Relevance: Is it unrelated to road/civic infrastructure? (Outcome B)
-  // e.g. Flower, pet, person, indoor object, vehicle interior
-  if (!visionResult.isRoad || visionResult.predictionState === 'INVALID_IMAGE' || visionResult.isDissimilar) {
-    console.log('[VALIDATION] Blocked: Image is unrelated or not civic infrastructure.');
-    return {
-      isValid: false,
-      outcome: 'BLOCK_UNRELATED_IMAGE',
-      rejectionTitle: VALIDATION_MESSAGES.UNRELATED_IMAGE.title,
-      rejectionMessage: VALIDATION_MESSAGES.UNRELATED_IMAGE.message,
-      detectedImageIssue: 'unrelated_image',
-      inferenceResult: visionResult,
-    };
-  }
-
-  // 6. Evaluate Description Issue Classification vs Visual Evidence:
+  // 2. Fully Description-Based Issue Classification
+  // The citizen description is the authoritative source for issue identification,
+  // priority, dynamic confidence, and department routing. The uploaded image is preserved
+  // as supporting evidence and does not block submissions, determine the category, or
+  // depend on an online vision service.
   const descClassification = classifyComplaintFromDescription(descTrimmed);
   const descCategory = noIssueCheck.identifiedIssue || descClassification.displayIssueName;
-  const isDescValidIssue = descClassification.isRecognized && !descClassification.requiresClarification && !noIssueCheck.isNoIssue;
 
-  // Visual model check: Did the visual detector detect no bounding boxes / clean road?
-  const isImageNormalRoad =
-    visionResult.predictionState === 'NO_MAJOR_ISSUE' ||
-    !visionResult.hasDamage ||
-    visionResult.issueType === 'no_major_issue' ||
-    visionResult.issueType === 'valid_road_no_issue';
-
-  if (isImageNormalRoad) {
-    // If the description also does not report an identifiable civic issue or reports normal road
-    if (!isDescValidIssue) {
-      console.log('[VALIDATION] Blocked: Clean road image without an identifiable civic defect in description.');
-      return {
-        isValid: false,
-        outcome: 'BLOCK_NORMAL_ROAD',
-        rejectionTitle: VALIDATION_MESSAGES.NORMAL_ROAD.title,
-        rejectionMessage: VALIDATION_MESSAGES.NORMAL_ROAD.message,
-        detectedImageIssue: 'Clean Road (No Major Issue)',
-        inferenceResult: visionResult,
-      };
-    }
-    // If the citizen description clearly reports a supported defect (e.g., "A large pothole is present near the bus stop"):
-    // The image confirms civic infrastructure presence. The visual detector returning no boxes must NOT falsely block the submission.
-    console.log(`[VALIDATION] Relevant road image verified with authoritative description issue: "${descCategory}". Automated detector returning no boxes does not block submission.`);
-  }
-
-  // 7. Evaluate Image-Description Consistency (Outcome E)
-  const imageCategory = visionResult.displayIssueName || visionResult.issueType;
-
-  // Only check incompatibility when the visual model detected a specific positive conflicting civic object (e.g. Streetlight when description is Pothole)
-  if (!isImageNormalRoad && visionResult.hasDamage && imageCategory && !areIssuesCompatible(imageCategory, descCategory)) {
-    console.log(`[VALIDATION] Blocked: Image (${imageCategory}) and description (${descCategory}) conflict.`);
-    return {
-      isValid: false,
-      outcome: 'BLOCK_CONFLICT',
-      rejectionTitle: VALIDATION_MESSAGES.CONFLICT.title,
-      rejectionMessage: VALIDATION_MESSAGES.CONFLICT.message,
-      detectedImageIssue: imageCategory,
-      detectedDescIssue: descCategory,
-      inferenceResult: visionResult,
-    };
-  }
-
-  // 8. Passed all validation gates: ALLOW (Outcome A)
-  // Authoritative issue category is determined by the citizen description!
-  console.log(`[VALIDATION] ALLOWED: Relevant image verified, authoritative description category: ${descCategory}.`);
+  console.log(`[VALIDATION] ALLOWED: Description authoritative. Category: "${descCategory}". Vision service not required.`);
   return {
     isValid: true,
     outcome: 'ALLOW',
-    detectedImageIssue: isImageNormalRoad ? 'Road Infrastructure Verified' : imageCategory,
+    detectedImageIssue: 'Supporting Evidence Attached',
     detectedDescIssue: descCategory,
-    inferenceResult: visionResult,
   };
 }

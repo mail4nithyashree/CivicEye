@@ -19,8 +19,7 @@ service cloud.firestore {
     
     // Role verification helpers based on users/{request.auth.uid}.role
     function isMainOfficer() {
-      return isAuthenticated() && (
-        !userDocExists() ||
+      return isAuthenticated() && userDocExists() && (
         getUserData().role == 'main_officer' ||
         getUserData().role == 'admin' ||
         getUserData().role == 'officer'
@@ -28,45 +27,67 @@ service cloud.firestore {
     }
     
     function isFieldInspector() {
-      return isAuthenticated() && (
-        !userDocExists() ||
+      return isAuthenticated() && userDocExists() && (
         getUserData().role == 'field_inspector' ||
         getUserData().role == 'inspector' ||
-        getUserData().role == 'officer'
+        getUserData().role == 'officer' ||
+        getUserData().role == 'admin'
       );
     }
     
-    function isOfficer() {
-      return isAuthenticated();
-    }
-    
     // -------------------------------------------------------------
-    // Users Collection (citizens, main_officer, field_inspector, admin, authority)
+    // Users Collection (citizens, officers, inspectors, admin)
     // -------------------------------------------------------------
     match /users/{userId} {
       allow read, get, list: if isAuthenticated();
-      allow create, update: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (
+        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'department'])) ||
+        isMainOfficer()
+      );
       allow delete: if false;
     }
     
     // -------------------------------------------------------------
-    // Complaints Collection (Single document per complaint)
+    // Complaints Collection
     // -------------------------------------------------------------
     match /complaints/{complaintId} {
       allow read, get, list: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        request.resource.data.citizenId == request.auth.uid ||
+        isMainOfficer()
+      );
+      allow update: if isAuthenticated() && (
+        (resource.data.citizenId == request.auth.uid && request.resource.data.citizenId == resource.data.citizenId) ||
+        isMainOfficer() ||
+        isFieldInspector()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.citizenId == request.auth.uid ||
+        isMainOfficer()
+      );
     }
     
     // -------------------------------------------------------------
-    // Notifications Collection
+    // Notifications Collection (scoped to recipient citizen/user)
     // -------------------------------------------------------------
     match /notifications/{notificationId} {
-      allow read, get, list: if isAuthenticated();
+      allow read, get, list: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.citizenId == request.auth.uid ||
+        isMainOfficer()
+      );
       allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.citizenId == request.auth.uid ||
+        isMainOfficer()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.citizenId == request.auth.uid ||
+        isMainOfficer()
+      );
     }
 
     // -------------------------------------------------------------
@@ -79,12 +100,21 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------
-    // Audit Logs Collection
+    // Audit Logs Collection (Tamper-proof, readable by authorized officers)
     // -------------------------------------------------------------
     match /audit_logs/{logId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && isMainOfficer();
       allow create: if isAuthenticated();
       allow update, delete: if false;
+    }
+
+    // -------------------------------------------------------------
+    // Counters Collection (Atomic ID allocation for complaints)
+    // -------------------------------------------------------------
+    match /counters/{counterId} {
+      allow read, get: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if false;
     }
   }
 }

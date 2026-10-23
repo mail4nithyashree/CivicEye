@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Image,
   View,
@@ -33,7 +33,7 @@ export default function CivicImage({
   ...rest
 }: CivicImageProps) {
   const cleanUri = typeof uri === 'string' && uri.trim().length > 0 ? uri.trim() : null;
-  const [hasError, setHasError] = useState<boolean>(!cleanUri);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
 
   const autoInvalid =
     isInvalid ||
@@ -42,12 +42,10 @@ export default function CivicImage({
        issueType.toLowerCase().includes('dissimilar') ||
        issueType.toLowerCase().includes('non-road')));
 
-  useEffect(() => {
-    setHasError(!cleanUri);
-  }, [cleanUri]);
+  const hasError = !cleanUri || failedUri === cleanUri;
 
   const handleError = () => {
-    setHasError(true);
+    if (cleanUri) setFailedUri(cleanUri);
   };
 
   if (hasError || !cleanUri) {

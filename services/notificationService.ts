@@ -31,7 +31,10 @@ export interface CivicNotification {
     | 'citizen_verification_needed'
     | 'complaint_closed'
     | 'complaint_rejected'
-    | 'complaint_reopened';
+    | 'complaint_reopened'
+    | 'complaint_deleted'
+    | 'clarification_requested'
+    | 'citizen_feedback';
   isRead: boolean;
   createdAt: Date;
 }

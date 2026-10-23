@@ -1,8 +1,10 @@
 import StatusBadge from '@/components/StatusBadge';
 import PracticalBudgetBreakdownCard from '@/components/PracticalBudgetBreakdownCard';
 import CivicImage from '@/components/CivicImage';
+import GradientCard from '@/components/GradientCard';
 import { getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { auth } from '@/firebaseConfig';
 import {
   assignToAuthority,
@@ -12,6 +14,9 @@ import {
   updateComplaintDepartment,
   verifyComplaintWorkflow,
   isInvalidImageComplaint,
+  deleteComplaintByAuthority,
+  requestClarificationByInspector,
+  closeComplaintByInspector,
   type Complaint,
 } from '@/services/complaintService';
 import {
@@ -20,6 +25,7 @@ import {
   isRoadDepartment,
 } from '@/services/departmentMapping';
 import { formatResolutionDate } from '@/services/resolutionDuration';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 import { createNotification } from '@/services/notificationService';
 import { subscribeToOfficerProfile, type Officer } from '@/services/officerService';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,6 +46,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+type DetailTab = 'details' | 'status' | 'budget' | 'department';
+
 const AUTHORITY_OPTIONS = [
   'Coimbatore City Municipal Corporation (CCMC) - North Zone',
   'Coimbatore City Municipal Corporation (CCMC) - East Zone',
@@ -51,8 +59,10 @@ const AUTHORITY_OPTIONS = [
 
 export default function OfficerComplaintDetailsScreen() {
   const router = useRouter();
+  const { colors, isDark } = useAppTheme();
   const rootNavigationState = useRootNavigationState();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const [activeTab, setActiveTab] = useState<DetailTab>('details');
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [officer, setOfficer] = useState<Officer | null>(null);
   const [complaint, setComplaint] = useState<Complaint | null>(null);
@@ -85,6 +95,21 @@ export default function OfficerComplaintDetailsScreen() {
   const [transferDeptCode, setTransferDeptCode] = useState<string>('SWM');
   const [transferRemarks, setTransferRemarks] = useState('');
   const [transferringDept, setTransferringDept] = useState(false);
+
+  // Authority Complaint Deletion State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletionReason, setDeletionReason] = useState('');
+  const [deletingComplaint, setDeletingComplaint] = useState(false);
+
+  // Inspector Clarification & Closure Modals State
+  const [showClarificationModal, setShowClarificationModal] = useState(false);
+  const [clarifyQuestion, setClarifyQuestion] = useState('');
+  const [submittingClarify, setSubmittingClarify] = useState(false);
+
+  const [showClosureModal, setShowClosureModal] = useState(false);
+  const [closureOutcome, setClosureOutcome] = useState('No Major Repair Required');
+  const [closureReasonText, setClosureReasonText] = useState('');
+  const [submittingClosure, setSubmittingClosure] = useState(false);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -392,20 +417,116 @@ export default function OfficerComplaintDetailsScreen() {
     }
   };
 
+  const handleInspectorRequestClarification = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!clarifyQuestion.trim()) {
+      Alert.alert('Required', 'Please enter a clarification question for the citizen.');
+      return;
+    }
+    setSubmittingClarify(true);
+    try {
+      await requestClarificationByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        clarifyQuestion.trim()
+      );
+      setShowClarificationModal(false);
+      setClarifyQuestion('');
+      Alert.alert('Clarification Dispatched', 'Clarification requested. Citizen has been notified by in-app alert and email.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to dispatch clarification.');
+    } finally {
+      setSubmittingClarify(false);
+    }
+  };
+
+  const handleInspectorCloseComplaint = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!closureReasonText.trim()) {
+      Alert.alert('Required', 'Please enter inspection findings or reason for closure.');
+      return;
+    }
+    setSubmittingClosure(true);
+    try {
+      await closeComplaintByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        closureReasonText.trim(),
+        closureOutcome
+      );
+      setShowClosureModal(false);
+      setClosureReasonText('');
+      Alert.alert('Complaint Closed', `Complaint has been officially closed: [${closureOutcome}]. Citizen has been notified.`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to close complaint.');
+    } finally {
+      setSubmittingClosure(false);
+    }
+  };
+
+  const handleAuthorityDelete = () => {
+    if (!complaint || !user) return;
+    if (!deletionReason.trim()) {
+      Alert.alert('Reason Required', 'Please provide a non-empty reason or clarification for removing this complaint.');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Removal',
+      `Are you sure you want to remove complaint ${complaint.complaintId}? The citizen will be notified with your explanation.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingComplaint(true);
+            try {
+              await deleteComplaintByAuthority(
+                complaint.id,
+                user.uid,
+                officer?.name || user.email?.split('@')[0] || 'Authority Officer',
+                officer?.role || 'officer',
+                deletionReason.trim()
+              );
+              setShowDeleteModal(false);
+              Alert.alert(
+                'Complaint Removed',
+                'The complaint has been removed from active views and the citizen was notified.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => router.back(),
+                  },
+                ]
+              );
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to remove complaint');
+            } finally {
+              setDeletingComplaint(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading || !officer) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.buttonPrimary} />
       </SafeAreaView>
     );
   }
 
   if (!complaint) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="alert-circle-outline" size={48} color={AppColors.error} />
-        <Text style={styles.errorText}>Complaint not found.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <Text style={[styles.errorText, { color: colors.textOnDark }]}>Complaint not found.</Text>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: colors.buttonPrimary }]}>
           <Text style={styles.backBtnText}>Go Back</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -415,604 +536,1011 @@ export default function OfficerComplaintDetailsScreen() {
   const isMainOfficer = officer?.role === 'officer' || officer?.role === 'admin';
   const isRejected = isInvalidImageComplaint(complaint);
 
+  const hasBudgetInfo =
+    (typeof complaint.estimatedBudget === 'number' && complaint.estimatedBudget > 0) ||
+    (typeof complaint.inspectionDetails?.estimatedBudget === 'number' && complaint.inspectionDetails.estimatedBudget > 0);
+
+  const budgetAmount = complaint.inspectionDetails?.estimatedBudget || complaint.estimatedBudget || getStandardEstimatedBudget(complaint.issueType, complaint.priority || complaint.severity).budget;
+
+  const hasDepartmentInfo = !!(
+    (complaint.department && complaint.department.trim() !== '') ||
+    (complaint.responsibleDepartment && complaint.responsibleDepartment.trim() !== '') ||
+    (complaint.departmentCode && complaint.departmentCode.trim() !== '')
+  );
+
   return (
-    <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+      {/* 1. Header Bar */}
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center' }}>
-          <Text style={styles.headerTitle}>#{complaint.complaintId}</Text>
-          <Text style={styles.headerSub}>{complaint.region} • {complaint.department || complaint.responsibleDepartment}</Text>
+          <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>{complaint.complaintId}</Text>
+          <Text style={[styles.headerSub, { color: colors.textOnDarkSecondary }]}>{complaint.region} • {complaint.department || complaint.responsibleDepartment}</Text>
         </View>
-        <View style={{ width: 24 }} />
+        {isMainOfficer ? (
+          <TouchableOpacity
+            onPress={() => setShowDeleteModal(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Delete Complaint"
+            style={{ padding: 4 }}
+          >
+            <Ionicons name="trash-outline" size={22} color="#DC2626" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 24 }} />
+        )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Rejection Alert Banner */}
-        {isRejected && (
-          <View style={styles.mismatchAlertBanner}>
-            <View style={styles.mismatchAlertHeader}>
-              <Ionicons name="close-circle" size={22} color="#DC2626" />
-              <Text style={styles.mismatchAlertTitle}>Invalid Issue image, raise the complaint with the appropriate image!</Text>
-            </View>
-            <Text style={styles.mismatchAlertText}>
-              This complaint was automatically rejected because the submitted photo did not contain valid civic infrastructure defects.
+      {/* 2. Four Tab Navigation Bar in Exact Requested Order */}
+      <View style={[styles.tabBar, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScrollContent}>
+          {/* Tab 1: Details (default) */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'details' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('details')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'details' }}
+          >
+            <Ionicons
+              name={activeTab === 'details' ? 'document-text' : 'document-text-outline'}
+              size={18}
+              color={activeTab === 'details' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'details' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'details' && styles.activeTabBtnText
+              ]}
+            >
+              Details
             </Text>
-            {complaint.rejectionReason ? (
-              <Text style={styles.mismatchAlertReason}>
-                Reason: {complaint.rejectionReason}
-              </Text>
-            ) : null}
-            <View style={styles.mismatchAlertBadge}>
-              <Text style={styles.mismatchAlertBadgeText}>INACTIVE • EXCLUDED FROM ACTIVE OFFICER QUEUES</Text>
-            </View>
-          </View>
-        )}
+          </TouchableOpacity>
 
-        {/* Defect Photo */}
-        <CivicImage
-          uri={complaint.imageUri}
-          issueType={complaint.issueType}
-          style={styles.image}
-          resizeMode="cover"
-        />
+          {/* Tab 2: Status */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'status' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('status')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'status' }}
+          >
+            <Ionicons
+              name={activeTab === 'status' ? 'time' : 'time-outline'}
+              size={18}
+              color={activeTab === 'status' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'status' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'status' && styles.activeTabBtnText
+              ]}
+            >
+              Status
+            </Text>
+          </TouchableOpacity>
 
-        {/* Status Card */}
-        <View style={styles.card}>
-          <View style={styles.statusRow}>
-            <View>
-              <Text style={styles.issueHeading}>{complaint.issueType}</Text>
-              <Text style={styles.subInfo}>Citizen: {complaint.citizenEmail}</Text>
-              <Text style={styles.subInfoDept}>Dept: {complaint.department || complaint.responsibleDepartment}</Text>
-            </View>
-            <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
-          </View>
+          {/* Tab 3: Budget */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'budget' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('budget')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'budget' }}
+          >
+            <Ionicons
+              name={activeTab === 'budget' ? 'cash' : 'cash-outline'}
+              size={18}
+              color={activeTab === 'budget' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'budget' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'budget' && styles.activeTabBtnText
+              ]}
+            >
+              Budget
+            </Text>
+          </TouchableOpacity>
 
-          {/* AI Model Detection Confidence & Extracted Keyword Badge */}
-          {typeof complaint.confidence === 'number' && complaint.confidence > 0 && (
-            <View style={styles.aiAccuracyRow}>
-              <View style={styles.aiAccuracyBadge}>
-                <Ionicons name="sparkles" size={12} color="#047857" />
-                <Text style={styles.aiAccuracyBadgeText}>
-                  AI Model Accuracy: {Math.round(complaint.confidence > 1 ? complaint.confidence : complaint.confidence * 100)}%
+          {/* Tab 4: Department Details */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'department' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('department')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'department' }}
+          >
+            <Ionicons
+              name={activeTab === 'department' ? 'business' : 'business-outline'}
+              size={18}
+              color={activeTab === 'department' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'department' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'department' && styles.activeTabBtnText
+              ]}
+            >
+              Department Details
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+
+      {/* 3. Main Scrollable Tab Content Container */}
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* ========================================================================= */}
+        {/* TAB 1: DETAILS (Selected by Default)                                      */}
+        {/* ========================================================================= */}
+        {activeTab === 'details' && (
+          <View style={styles.tabContentContainer}>
+            {/* Rejection Alert Banner */}
+            {isRejected && (
+              <View style={styles.mismatchAlertBanner}>
+                <View style={styles.mismatchAlertHeader}>
+                  <Ionicons name="close-circle" size={22} color="#DC2626" />
+                  <Text style={styles.mismatchAlertTitle}>Invalid Issue image, raise the complaint with the appropriate image!</Text>
+                </View>
+                <Text style={styles.mismatchAlertText}>
+                  This complaint was automatically rejected because the submitted photo did not contain valid civic infrastructure defects.
                 </Text>
+                {complaint.rejectionReason ? (
+                  <Text style={styles.mismatchAlertReason}>
+                    Reason: {complaint.rejectionReason}
+                  </Text>
+                ) : null}
+                <View style={styles.mismatchAlertBadge}>
+                  <Text style={styles.mismatchAlertBadgeText}>INACTIVE • EXCLUDED FROM ACTIVE OFFICER QUEUES</Text>
+                </View>
               </View>
-              {complaint.matchedKeyword ? (
-                <View style={styles.keywordChip}>
-                  <Ionicons name="pricetag-outline" size={11} color="#0369A1" />
-                  <Text style={styles.keywordChipText}>Keyword: &ldquo;{complaint.matchedKeyword}&rdquo;</Text>
+            )}
+
+            {/* Defect Photo */}
+            <CivicImage
+              uri={complaint.imageUri}
+              issueType={complaint.issueType}
+              style={styles.image}
+              resizeMode="cover"
+            />
+
+            {/* Status / Overview Card */}
+            <GradientCard style={styles.card}>
+              <View style={styles.statusRow}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={[styles.issueHeading, { color: colors.textPrimary }]}>{complaint.displayIssueName || formatDisplayIssueName(complaint.issueType)}</Text>
+                  <Text style={[styles.subInfo, { color: colors.textSecondary }]}>Citizen: {complaint.citizenEmail}</Text>
+                  <Text style={[styles.subInfoDept, { color: colors.buttonPrimary }]}>Dept: {complaint.department || complaint.responsibleDepartment}</Text>
+                </View>
+                <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
+              </View>
+
+              {/* AI Model Detection Confidence & Extracted Keyword Badge */}
+              {typeof complaint.confidence === 'number' && complaint.confidence > 0 && (
+                <View style={styles.aiAccuracyRow}>
+                  <View style={[styles.aiAccuracyBadge, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }]}>
+                    <Ionicons name="sparkles" size={12} color="#047857" />
+                    <Text style={[styles.aiAccuracyBadgeText, { color: '#047857', fontWeight: '700' }]}>
+                      Description Heuristic Confidence: {Math.round(complaint.confidence > 1 ? complaint.confidence : complaint.confidence * 100)}%
+                    </Text>
+                  </View>
+                  {complaint.matchedKeyword ? (
+                    <View style={[styles.keywordChip, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }]}>
+                      <Ionicons name="pricetag-outline" size={11} color={colors.buttonPrimary} />
+                      <Text style={[styles.keywordChipText, { color: colors.textPrimary }]}>Keyword: &ldquo;{complaint.matchedKeyword}&rdquo;</Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+
+              {/* Citizen Description & Landmark - High Visibility */}
+              {complaint.description ? (
+                <View style={[styles.descHighlightBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }]}>
+                  <View style={styles.descHeaderRow}>
+                    <Ionicons name="chatbox-ellipses" size={14} color={colors.buttonPrimary} />
+                    <Text style={[styles.descHeaderLabel, { color: colors.textSecondary }]}>Citizen Description &amp; Landmark</Text>
+                  </View>
+                  <Text style={[styles.descText, { color: colors.textPrimary }]}>{complaint.description}</Text>
                 </View>
               ) : null}
-            </View>
-          )}
 
-          {/* Citizen Description & Landmark - High Visibility */}
-          {complaint.description ? (
-            <View style={styles.descHighlightBox}>
-              <View style={styles.descHeaderRow}>
-                <Ionicons name="chatbox-ellipses" size={14} color={AppColors.primary} />
-                <Text style={styles.descHeaderLabel}>Citizen Description &amp; Landmark</Text>
+              <View style={[styles.metaRow, { borderTopColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                <View style={styles.metaItem}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>GPS Coordinates</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.latitude.toFixed(5)}, {complaint.longitude.toFixed(5)}</Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Coimbatore Region</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.region}</Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Est. Budget (INR)</Text>
+                  <Text style={[styles.metaVal, { color: '#047857', fontWeight: '800' }]}>
+                    ₹{budgetAmount.toLocaleString('en-IN')}
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.descText}>{complaint.description}</Text>
-            </View>
-          ) : null}
+            </GradientCard>
 
-          <View style={styles.metaRow}>
-            <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>GPS Coordinates</Text>
-              <Text style={styles.metaVal}>{complaint.latitude.toFixed(5)}, {complaint.longitude.toFixed(5)}</Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>Coimbatore Region</Text>
-              <Text style={styles.metaVal}>{complaint.region}</Text>
-            </View>
-            <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>Est. Budget (INR)</Text>
-              <Text style={[styles.metaVal, { color: '#0D9488', fontWeight: '800' }]}>
-                ₹{(complaint.inspectionDetails?.estimatedBudget ?? complaint.estimatedBudget ?? getStandardEstimatedBudget(complaint.issueType, complaint.priority || complaint.severity).budget).toLocaleString('en-IN')}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Department & Routing Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardSectionTitle}>Department Routing</Text>
-            {isMainOfficer && !isRejected && (
-              <TouchableOpacity
-                style={styles.changeDeptBtn}
-                onPress={handleOpenDeptModal}
-                accessibilityRole="button"
-                accessibilityLabel="Change Department"
-              >
-                <Ionicons name="swap-horizontal" size={14} color={AppColors.primary} />
-                <Text style={styles.changeDeptBtnText}>Change Dept</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.deptStatusRow}>
-            {(() => {
-              const isMoved =
-                complaint.routingStatus === 'Moved to Solid Waste Management' ||
-                complaint.routingStatus === 'Moved' ||
-                complaint.department === 'Solid Waste Management' ||
-                complaint.departmentCode === 'SWM' ||
-                (complaint.department && complaint.department !== 'Road Maintenance');
-
-              return (
-                <>
-                  <View style={[
-                    styles.deptBadgeLarge,
-                    isMoved ? styles.deptBadgeLargeMoved : styles.deptBadgeLargeDirect
-                  ]}>
-                    <Ionicons
-                      name={isMoved ? 'swap-horizontal' : 'business'}
-                      size={16}
-                      color={isMoved ? '#0369A1' : AppColors.textPrimary}
-                    />
-                    <Text style={[
-                      styles.deptBadgeLargeText,
-                      isMoved ? styles.deptBadgeLargeTextMoved : {}
-                    ]}>
-                      {complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.routingTag}>
-                    <Text style={styles.routingTagText}>
-                      Routing Status: {complaint.routingStatus || (isMoved ? 'Moved to Solid Waste Management' : 'Direct Assignment')}
-                    </Text>
-                  </View>
-                </>
-              );
-            })()}
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.deptDetailItem}>
-            <Text style={styles.infoLabel}>Assigned Officer</Text>
-            <Text style={styles.infoValue}>
-              {complaint.assignedOfficerName || complaint.assignedOfficer || 'Awaiting Assignment'}
-            </Text>
-          </View>
-
-          {complaint.assignedInspectorName ? (
-            <View style={styles.deptDetailItem}>
-              <Text style={styles.infoLabel}>Assigned Field Inspector</Text>
-              <Text style={styles.infoValue}>
-                {complaint.assignedInspectorName}
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.deptDetailItem}>
-            <Text style={styles.infoLabel}>Department Source</Text>
-            <Text style={styles.infoValue}>
-              {complaint.departmentSource === 'description'
-                ? 'Auto-detected from Citizen Description'
-                : complaint.departmentSource === 'field_inspector'
-                ? 'Field Inspector Correction'
-                : complaint.departmentSource === 'officer'
-                ? 'Officer Manual Reassignment'
-                : 'AI Image Model'}
-            </Text>
-          </View>
-
-          {complaint.departmentExplanation ? (
-            <View style={styles.deptExplanationBox}>
-              <Ionicons name="information-circle-outline" size={16} color="#0369A1" />
-              <Text style={styles.deptExplanationText}>
-                {complaint.departmentExplanation}
-              </Text>
-            </View>
-          ) : null}
-
-          {complaint.departmentRemarks ? (
-            <View style={styles.remarksBox}>
-              <Text style={styles.remarksLabel}>Department Update Remarks:</Text>
-              <Text style={styles.remarksText}>{complaint.departmentRemarks}</Text>
-            </View>
-          ) : null}
-
-          {complaint.departmentChangedByName && (
-            <Text style={styles.infoSubtext}>
-              Last modified by {complaint.departmentChangedByName}
-              {complaint.departmentChangedAt ? ` on ${complaint.departmentChangedAt.toLocaleDateString('en-IN')}` : ''}
-            </Text>
-          )}
-        </View>
-
-        {/* AI Prediction Box */}
-        <View style={styles.card}>
-          <View style={styles.boxHeader}>
-            <Ionicons name="hardware-chip-outline" size={16} color={AppColors.primary} />
-            <Text style={styles.boxTitle}>AI Model Preliminary Output</Text>
-          </View>
-          <View style={styles.grid2}>
-            <View>
-              <Text style={styles.metaLabel}>AI Defect Class</Text>
-              <Text style={styles.metaVal}>{complaint.issueType.toUpperCase()}</Text>
-            </View>
-            <View>
-              <Text style={styles.metaLabel}>AI Confidence</Text>
-              <Text style={styles.metaVal}>{complaint.confidence}%</Text>
-            </View>
-          </View>
-
-          <View style={[styles.grid2, { marginTop: 8 }]}>
-            <View>
-              <Text style={styles.metaLabel}>AI Priority / Severity</Text>
-              <Text style={styles.metaVal}>{complaint.priority || complaint.severity || 'MEDIUM'}</Text>
-            </View>
-            <View>
-              <Text style={styles.metaLabel}>Budget Status</Text>
-              <Text style={[styles.metaVal, { color: '#0D9488' }]}>
-                {complaint.inspectionDetails?.estimatedBudget || complaint.estimatedBudget
-                  ? `₹${(complaint.inspectionDetails?.estimatedBudget || complaint.estimatedBudget || 0).toLocaleString('en-IN')} (Field Verified)`
-                  : 'Pending Field Inspection'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* FIELD VERIFICATION SECTION (In-Workflow Verification & Routing) */}
-        <View style={[styles.card, styles.fieldVerificationCard]}>
-          <View style={styles.boxHeader}>
-            <Ionicons name="shield-checkmark" size={18} color="#0D9488" />
-            <Text style={[styles.boxTitle, { color: '#0D9488' }]}>Field Verification</Text>
-          </View>
-
-          {/* Verification Status Banner */}
-          {complaint.fieldVerificationStatus === 'department_confirmed' ? (
-            <View style={styles.verifiedSuccessBanner}>
-              <Ionicons name="checkmark-circle" size={20} color="#047857" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.verifiedSuccessTitle}>✓ Existing Department Confirmed</Text>
-                <Text style={styles.verifiedSuccessSub}>
-                  Complaint verified under {complaint.department || complaint.responsibleDepartment}
-                </Text>
+            {/* AI Prediction Box */}
+            <GradientCard style={styles.card}>
+              <View style={[styles.boxHeader, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                <Ionicons name="hardware-chip-outline" size={16} color={colors.buttonPrimary} />
+                <Text style={[styles.boxTitle, { color: colors.buttonPrimary }]}>Defect Identification &amp; Severity</Text>
               </View>
-            </View>
-          ) : complaint.fieldVerificationStatus === 'transferred' ? (
-            <View style={styles.transferredBanner}>
-              <Ionicons name="swap-horizontal" size={20} color="#0369A1" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.transferredTitle}>⚠ Another Department Involved &amp; Transferred</Text>
-                <Text style={styles.transferredSub}>
-                  Re-routed from {complaint.previousDepartment || 'Previous Dept'} to {complaint.department || complaint.responsibleDepartment}
-                </Text>
-              </View>
-            </View>
-          ) : complaint.status === 'Verified' || complaint.inspectionDetails ? (
-            <View style={styles.verifiedSuccessBanner}>
-              <Ionicons name="checkmark-circle" size={20} color="#047857" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.verifiedSuccessTitle}>✓ Field Verified &amp; Inspected</Text>
-                <Text style={styles.verifiedSuccessSub}>
-                  On-site verification completed by {complaint.assignedInspectorName || complaint.inspectionDetails?.inspectedByName || 'Field Inspector'}
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.pendingVerifyBanner}>
-              <Ionicons name="hourglass-outline" size={20} color="#B45309" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pendingVerifyTitle}>Pending Field Verification</Text>
-                <Text style={styles.pendingVerifySub}>
-                  Verify whether the complaint belongs to {complaint.department || complaint.responsibleDepartment} or another department is involved.
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {/* Verification Meta Grid */}
-          <View style={styles.grid2}>
-            <View>
-              <Text style={styles.metaLabel}>Current Department</Text>
-              <Text style={styles.metaVal}>{complaint.department || complaint.responsibleDepartment}</Text>
-            </View>
-            <View>
-              <Text style={styles.metaLabel}>Field Verification</Text>
-              <Text style={[styles.metaVal, { textTransform: 'capitalize', color: complaint.fieldVerificationStatus === 'department_confirmed' || complaint.status === 'Verified' ? '#047857' : complaint.fieldVerificationStatus === 'transferred' ? '#0369A1' : '#B45309' }]}>
-                {complaint.fieldVerificationStatus === 'department_confirmed' ? 'Verified (Confirmed)' : complaint.fieldVerificationStatus === 'transferred' ? 'Transferred' : complaint.status === 'Verified' ? 'Verified' : 'Pending Verification'}
-              </Text>
-            </View>
-          </View>
-
-          <View style={[styles.grid2, { marginTop: 8 }]}>
-            <View>
-              <Text style={styles.metaLabel}>Assigned Officer</Text>
-              <Text style={styles.metaVal}>{complaint.assignedOfficerName || complaint.assignedOfficer || 'Awaiting Assignment'}</Text>
-            </View>
-            <View>
-              <Text style={styles.metaLabel}>Priority</Text>
-              <Text style={[styles.metaVal, { color: complaint.priority === 'HIGH' || complaint.priority === 'Critical' ? AppColors.error : '#C2410C' }]}>
-                {complaint.priority || complaint.severity || 'LOW'}
-              </Text>
-            </View>
-          </View>
-
-          <View style={[styles.grid2, { marginTop: 8 }]}>
-            <View>
-              <Text style={styles.metaLabel}>Est. Resolution Duration</Text>
-              <Text style={styles.metaVal}>{complaint.estimatedResolutionDuration || (complaint.estimatedResolutionDays ? `${complaint.estimatedResolutionDays} Days` : '3 Days')}</Text>
-            </View>
-            <View>
-              <Text style={styles.metaLabel}>Expected Resolution Date</Text>
-              <Text style={styles.metaVal}>{complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Pending Verification'}</Text>
-            </View>
-          </View>
-
-          {complaint.fieldVerificationRemarks ? (
-            <View style={styles.verificationNotesBox}>
-              <Text style={styles.metaLabel}>Verification Remarks</Text>
-              <Text style={styles.notesText}>&ldquo;{complaint.fieldVerificationRemarks}&rdquo;</Text>
-              {complaint.fieldVerifiedBy ? (
-                <Text style={styles.signedBy}>— Verified by {complaint.fieldVerifiedBy}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {/* Verification Action Buttons */}
-          {!isRejected && (
-            <View style={styles.verificationBtnGroup}>
-              <TouchableOpacity
-                style={styles.verifyConfirmBtn}
-                onPress={() => setShowConfirmDeptModal(true)}
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel="Verify Existing Department"
-              >
-                <Ionicons name="checkmark-circle-outline" size={16} color={AppColors.white} />
-                <Text style={styles.verifyConfirmBtnText}>Verify Existing Department</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.verifyTransferBtn}
-                onPress={() => {
-                  setTransferDeptCode(complaint.departmentCode === 'ROAD' ? 'SWM' : 'ROAD');
-                  setTransferRemarks('');
-                  setShowTransferDeptModal(true);
-                }}
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel="Another Department Involved"
-              >
-                <Ionicons name="swap-horizontal" size={16} color="#0369A1" />
-                <Text style={styles.verifyTransferBtnText}>Another Dept Involved</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {!isRejected && isRoadDepartment(complaint.department || complaint.responsibleDepartment) && (
-            <TouchableOpacity
-              style={styles.detailedInspectionLinkBtn}
-              onPress={() => router.push({ pathname: '/officer/inspection-screen', params: { id: complaint.id } })}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel="Open Detailed Road BOQ & Budget Inspection"
-            >
-              <Ionicons name="construct-outline" size={14} color="#0D9488" />
-              <Text style={styles.detailedInspectionLinkText}>Detailed Technical Road BOQ Inspection &rarr;</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* If Full Physical Inspection Details Exist (Roads) */}
-          {complaint.inspectionDetails && (
-            <View style={styles.inspectorDetailInnerBox}>
-              <Text style={styles.innerSectionTitle}>Technical Road Inspection Summary</Text>
               <View style={styles.grid2}>
                 <View>
-                  <Text style={styles.metaLabel}>Road Identified</Text>
-                  <Text style={styles.metaVal}>{complaint.inspectionDetails.roadName}</Text>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Issue Name</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.displayIssueName || formatDisplayIssueName(complaint.issueType)}</Text>
                 </View>
                 <View>
-                  <Text style={styles.metaLabel}>Maintenance Authority</Text>
-                  <Text style={styles.authoritySubText}>{complaint.inspectionDetails.maintenanceAuthority}</Text>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Confidence Score</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                    {Math.round(complaint.confidence > 0 && complaint.confidence <= 1 ? complaint.confidence * 100 : (complaint.confidence || 0))}% (Description Heuristic)
+                  </Text>
                 </View>
               </View>
 
               <View style={[styles.grid2, { marginTop: 8 }]}>
                 <View>
-                  <Text style={styles.metaLabel}>Verified Issue &amp; Severity</Text>
-                  <Text style={styles.metaVal}>{complaint.inspectionDetails.verifiedIssue.toUpperCase()} ({complaint.inspectionDetails.severity})</Text>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Priority / Severity</Text>
+                  <Text style={[styles.metaVal, { color: (complaint.priority || complaint.severity || 'LOW').toUpperCase() === 'HIGH' ? AppColors.error : '#C2410C' }]}>
+                    {(complaint.priority || complaint.severity || 'MEDIUM').toUpperCase()}
+                  </Text>
                 </View>
                 <View>
-                  <Text style={styles.metaLabel}>Manual Estimated Budget</Text>
-                  <Text style={[styles.metaVal, { color: '#0F766E', fontWeight: '800' }]}>
-                    ₹{complaint.inspectionDetails.estimatedBudget.toLocaleString('en-IN')}
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Budget Status</Text>
+                  <Text style={[styles.metaVal, { color: '#0D9488' }]}>
+                    {hasBudgetInfo ? `₹${budgetAmount.toLocaleString('en-IN')} (Field Assessed)` : 'Pending Field Inspection'}
                   </Text>
                 </View>
               </View>
 
-              {complaint.inspectionDetails.inspectorRemarks ? (
-                <View style={[styles.verificationNotesBox, { marginTop: 8 }]}>
-                  <Text style={styles.metaLabel}>Inspector On-Site Observations</Text>
-                  <Text style={styles.notesText}>&ldquo;{complaint.inspectionDetails.inspectorRemarks}&rdquo;</Text>
+              {complaint.priorityReason ? (
+                <View style={{ marginTop: 8, padding: 8, backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderRadius: 6, borderWidth: 1, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }}>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '600' }}>
+                    Priority Reason: <Text style={{ color: colors.textPrimary, fontWeight: '500' }}>{complaint.priorityReason}</Text>
+                  </Text>
                 </View>
               ) : null}
+            </GradientCard>
 
-              {(complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl) ? (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={styles.metaLabel}>Field Inspector Observation Photo</Text>
-                  <CivicImage
-                    uri={complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl}
-                    style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }}
-                    resizeMode="cover"
-                  />
+            {/* Authority Deletion Action Card (for authorized officers) */}
+            {isMainOfficer && (
+              <View style={{ marginTop: 12, padding: 16, backgroundColor: '#FEF2F2', borderRadius: 14, borderWidth: 1, borderColor: '#FCA5A5' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Ionicons name="trash" size={18} color="#DC2626" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#991B1B', marginLeft: 8 }}>
+                    Remove / Delete Complaint
+                  </Text>
                 </View>
-              ) : null}
-
-              <View style={{ marginTop: 8 }}>
-                <PracticalBudgetBreakdownCard
-                  budgetBreakdown={complaint.inspectionDetails.budgetBreakdown || complaint.budgetBreakdown}
-                  issueType={complaint.inspectionDetails.verifiedIssue}
-                  severity={complaint.inspectionDetails.severity}
-                  estimatedBudget={complaint.inspectionDetails.estimatedBudget}
-                  estimatedBudgetDesc={complaint.inspectionDetails.budgetBreakdown?.description}
-                  title="Inspector Verified BOQ Allocation"
-                  showBoqToggle={true}
-                  initiallyExpanded={false}
-                />
+                <Text style={{ fontSize: 12, color: '#7F1D1D', marginBottom: 12, lineHeight: 17 }}>
+                  Exclude this complaint from active officer, inspector, and citizen views. A clear deletion reason is required and will be automatically dispatched to the citizen.
+                </Text>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#DC2626', paddingVertical: 12, borderRadius: 8, alignItems: 'center' }}
+                  onPress={() => setShowDeleteModal(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove Complaint as Authority"
+                >
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>
+                    Remove Complaint as Authority
+                  </Text>
+                </TouchableOpacity>
               </View>
-            </View>
-          )}
-        </View>
+            )}
+          </View>
+        )}
 
-        {/* Resolution Details Card */}
-        {(complaint.status === 'Resolved' || complaint.resolutionDetails) && (
-          <View style={[styles.card, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1.5 }]}>
-            <View style={styles.boxHeader}>
-              <Ionicons name="checkmark-circle" size={18} color="#15803D" />
-              <Text style={[styles.boxTitle, { color: '#15803D' }]}>Complaint Resolved</Text>
-            </View>
-            <View style={styles.metaRow}>
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>Resolved By</Text>
-                <Text style={styles.metaVal}>{complaint.resolutionDetails?.resolvedByName || complaint.assignedOfficerName || 'Maintenance Division'}</Text>
+        {/* ========================================================================= */}
+        {/* TAB 2: STATUS                                                             */}
+        {/* ========================================================================= */}
+        {activeTab === 'status' && (
+          <View style={styles.tabContentContainer}>
+            {/* Status Lifecycle Overview Card */}
+            <GradientCard style={styles.card}>
+              <View style={styles.statusRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.cardSectionTitle, { color: colors.textPrimary, marginBottom: 2 }]}>
+                    Complaint Lifecycle Status
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    Real-time operational tracking
+                  </Text>
+                </View>
+                <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
               </View>
-              {complaint.resolutionDetails?.resolvedAt && (
+
+              <View style={[styles.metaRow, { borderTopColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight, marginTop: 12 }]}>
                 <View style={styles.metaItem}>
-                  <Text style={styles.metaLabel}>Resolved Date</Text>
-                  <Text style={styles.metaVal}>
-                    {complaint.resolutionDetails.resolvedAt instanceof Date
-                      ? complaint.resolutionDetails.resolvedAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-                      : 'Completed'}
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Est. Resolution</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                    {complaint.estimatedResolutionDuration || (complaint.estimatedResolutionDays ? `${complaint.estimatedResolutionDays} Days` : '3 Days')}
                   </Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Expected Date</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                    {complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Pending Schedule'}
+                  </Text>
+                </View>
+              </View>
+            </GradientCard>
+
+            {/* FIELD VERIFICATION SECTION */}
+            <GradientCard style={[styles.card, styles.fieldVerificationCard]}>
+              <View style={[styles.boxHeader, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                <Ionicons name="shield-checkmark" size={18} color="#0D9488" />
+                <Text style={[styles.boxTitle, { color: '#0D9488' }]}>Field Verification</Text>
+              </View>
+
+              {/* Verification Status Banner */}
+              {complaint.fieldVerificationStatus === 'department_confirmed' ? (
+                <View style={styles.verifiedSuccessBanner}>
+                  <Ionicons name="checkmark-circle" size={20} color="#047857" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.verifiedSuccessTitle}>✓ Existing Department Confirmed</Text>
+                    <Text style={styles.verifiedSuccessSub}>
+                      Complaint verified under {complaint.department || complaint.responsibleDepartment}
+                    </Text>
+                  </View>
+                </View>
+              ) : complaint.fieldVerificationStatus === 'transferred' ? (
+                <View style={styles.transferredBanner}>
+                  <Ionicons name="swap-horizontal" size={20} color="#0369A1" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.transferredTitle}>⚠ Another Department Involved &amp; Transferred</Text>
+                    <Text style={styles.transferredSub}>
+                      Re-routed from {complaint.previousDepartment || 'Previous Dept'} to {complaint.department || complaint.responsibleDepartment}
+                    </Text>
+                  </View>
+                </View>
+              ) : complaint.status === 'Verified' || complaint.inspectionDetails ? (
+                <View style={styles.verifiedSuccessBanner}>
+                  <Ionicons name="checkmark-circle" size={20} color="#047857" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.verifiedSuccessTitle}>✓ Field Verified &amp; Inspected</Text>
+                    <Text style={styles.verifiedSuccessSub}>
+                      On-site verification completed by {complaint.assignedInspectorName || complaint.inspectionDetails?.inspectedByName || 'Field Inspector'}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.pendingVerifyBanner}>
+                  <Ionicons name="hourglass-outline" size={20} color="#B45309" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pendingVerifyTitle}>Pending Field Verification</Text>
+                    <Text style={styles.pendingVerifySub}>
+                      Verify whether the complaint belongs to {complaint.department || complaint.responsibleDepartment} or another department is involved.
+                    </Text>
+                  </View>
                 </View>
               )}
-            </View>
-            {complaint.resolutionDetails?.resolutionRemarks ? (
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.metaLabel}>Resolution Remarks</Text>
-                <Text style={[styles.metaVal, { fontWeight: '500', marginTop: 2 }]}>
-                  {complaint.resolutionDetails.resolutionRemarks}
-                </Text>
-              </View>
-            ) : null}
-            {complaint.resolutionDetails?.afterRepairImageUri ? (
-              <View style={{ marginTop: 10 }}>
-                <Text style={styles.metaLabel}>Repair Evidence Photo</Text>
-                <CivicImage
-                  uri={complaint.resolutionDetails.afterRepairImageUri}
-                  style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }}
-                  resizeMode="cover"
-                />
-              </View>
-            ) : null}
-          </View>
-        )}
 
-        {/* Citizen Verification Status */}
-        {complaint.citizenVerification && (
-          <View style={styles.card}>
-            <View style={styles.boxHeader}>
-              <Ionicons name="person-circle-outline" size={16} color="#7E22CE" />
-              <Text style={[styles.boxTitle, { color: '#7E22CE' }]}>Citizen Final Verification Status</Text>
-            </View>
-            <Text style={styles.metaVal}>
-              {complaint.citizenVerification.isResolvedSatisfied
-                ? '✅ Citizen Confirmed Repair Completed (Closed)'
-                : '⚠️ Citizen Disputed Repair (Reopened)'}
-            </Text>
-            {complaint.citizenVerification.citizenFeedback ? (
-              <Text style={styles.notesText}>
-                Feedback: &ldquo;{complaint.citizenVerification.citizenFeedback}&rdquo;
-              </Text>
-            ) : null}
-          </View>
-        )}
-
-        {/* Audit Log */}
-        {complaint.statusHistory && complaint.statusHistory.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Status Audit Log</Text>
-            {complaint.statusHistory.map((item, idx) => (
-              <View key={item.id || idx} style={styles.historyRow}>
-                <View style={styles.historyDot} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.historyStatus}>{item.newStatus}</Text>
-                  {item.remarks ? <Text style={styles.historyRemarks}>{item.remarks}</Text> : null}
-                  <Text style={styles.historyBy}>Updated by {item.updatedByName}</Text>
+              {/* Verification Meta Grid */}
+              <View style={styles.grid2}>
+                <View>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Current Department</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.department || complaint.responsibleDepartment}</Text>
+                </View>
+                <View>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Field Verification</Text>
+                  <Text style={[styles.metaVal, { textTransform: 'capitalize', color: complaint.fieldVerificationStatus === 'department_confirmed' || complaint.status === 'Verified' ? '#047857' : complaint.fieldVerificationStatus === 'transferred' ? '#0369A1' : '#B45309' }]}>
+                    {complaint.fieldVerificationStatus === 'department_confirmed' ? 'Verified (Confirmed)' : complaint.fieldVerificationStatus === 'transferred' ? 'Transferred' : complaint.status === 'Verified' ? 'Verified' : 'Pending Verification'}
+                  </Text>
                 </View>
               </View>
-            ))}
+
+              <View style={[styles.grid2, { marginTop: 8 }]}>
+                <View>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Assigned Officer</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.assignedOfficerName || complaint.assignedOfficer || 'Awaiting Assignment'}</Text>
+                </View>
+                <View>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Priority</Text>
+                  <Text style={[styles.metaVal, { color: complaint.priority === 'HIGH' || complaint.priority === 'Critical' ? AppColors.error : '#C2410C' }]}>
+                    {complaint.priority || complaint.severity || 'LOW'}
+                  </Text>
+                </View>
+              </View>
+
+              {complaint.fieldVerificationRemarks ? (
+                <View style={[styles.verificationNotesBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }]}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Verification Remarks</Text>
+                  <Text style={[styles.notesText, { color: colors.textPrimary }]}>&ldquo;{complaint.fieldVerificationRemarks}&rdquo;</Text>
+                  {complaint.fieldVerifiedBy ? (
+                    <Text style={[styles.signedBy, { color: colors.textSecondary }]}>— Verified by {complaint.fieldVerifiedBy}</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* Verification Action Buttons */}
+              {!isRejected && (
+                <View style={styles.verificationBtnGroup}>
+                  <TouchableOpacity
+                    style={styles.verifyConfirmBtn}
+                    onPress={() => setShowConfirmDeptModal(true)}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel="Verify Existing Department"
+                  >
+                    <Ionicons name="checkmark-circle-outline" size={16} color={AppColors.white} />
+                    <Text style={styles.verifyConfirmBtnText}>Verify Existing Department</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.verifyTransferBtn}
+                    onPress={() => {
+                      setTransferDeptCode(complaint.departmentCode === 'ROAD' ? 'SWM' : 'ROAD');
+                      setTransferRemarks('');
+                      setShowTransferDeptModal(true);
+                    }}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel="Another Department Involved"
+                  >
+                    <Ionicons name="swap-horizontal" size={16} color="#0369A1" />
+                    <Text style={styles.verifyTransferBtnText}>Another Dept Involved</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {!isRejected && isRoadDepartment(complaint.department || complaint.responsibleDepartment) && (
+                <TouchableOpacity
+                  style={styles.detailedInspectionLinkBtn}
+                  onPress={() => router.push({ pathname: '/officer/inspection-screen', params: { id: complaint.id } })}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Detailed Road BOQ & Budget Inspection"
+                >
+                  <Ionicons name="construct-outline" size={14} color="#0D9488" />
+                  <Text style={styles.detailedInspectionLinkText}>Detailed Technical Road BOQ Inspection &rarr;</Text>
+                </TouchableOpacity>
+              )}
+            </GradientCard>
+
+            {/* Resolution Details Card */}
+            {(complaint.status === 'Resolved' || complaint.resolutionDetails) && (
+              <GradientCard style={styles.card}>
+                <View style={[styles.boxHeader, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                  <Ionicons name="checkmark-circle" size={18} color="#15803D" />
+                  <Text style={[styles.boxTitle, { color: '#15803D' }]}>Complaint Resolved</Text>
+                </View>
+                <View style={[styles.metaRow, { borderTopColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                  <View style={styles.metaItem}>
+                    <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Resolved By</Text>
+                    <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.resolutionDetails?.resolvedByName || complaint.assignedOfficerName || 'Maintenance Division'}</Text>
+                  </View>
+                  {complaint.resolutionDetails?.resolvedAt && (
+                    <View style={styles.metaItem}>
+                      <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Resolved Date</Text>
+                      <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                        {complaint.resolutionDetails.resolvedAt instanceof Date
+                          ? complaint.resolutionDetails.resolvedAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : 'Completed'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                {complaint.resolutionDetails?.resolutionRemarks ? (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Resolution Remarks</Text>
+                    <Text style={[styles.metaVal, { color: colors.textPrimary, fontWeight: '500', marginTop: 2 }]}>
+                      {complaint.resolutionDetails.resolutionRemarks}
+                    </Text>
+                  </View>
+                ) : null}
+                {complaint.resolutionDetails?.afterRepairImageUri ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Repair Evidence Photo</Text>
+                    <CivicImage
+                      uri={complaint.resolutionDetails.afterRepairImageUri}
+                      style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }}
+                      resizeMode="cover"
+                    />
+                  </View>
+                ) : null}
+              </GradientCard>
+            )}
+
+            {/* Citizen Verification Status */}
+            {complaint.citizenVerification && (
+              <GradientCard style={styles.card}>
+                <View style={[styles.boxHeader, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                  <Ionicons name="person-circle-outline" size={16} color="#7E22CE" />
+                  <Text style={[styles.boxTitle, { color: '#7E22CE' }]}>Citizen Final Verification Status</Text>
+                </View>
+                <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                  {complaint.citizenVerification.isResolvedSatisfied
+                    ? '✅ Citizen Confirmed Repair Completed (Closed)'
+                    : '⚠️ Citizen Disputed Repair (Reopened)'}
+                </Text>
+                {complaint.citizenVerification.citizenFeedback ? (
+                  <Text style={[styles.notesText, { color: colors.textSecondary }]}>
+                    Feedback: &ldquo;{complaint.citizenVerification.citizenFeedback}&rdquo;
+                  </Text>
+                ) : null}
+              </GradientCard>
+            )}
+
+            {/* Audit Log */}
+            {complaint.statusHistory && complaint.statusHistory.length > 0 && (
+              <GradientCard style={styles.card}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Status Audit Log</Text>
+                {complaint.statusHistory.map((item, idx) => (
+                  <View key={item.id || idx} style={[styles.historyRow, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                    <View style={[styles.historyDot, { backgroundColor: colors.buttonPrimary }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.historyStatus, { color: colors.textPrimary }]}>{item.newStatus}</Text>
+                      {item.remarks ? <Text style={[styles.historyRemarks, { color: colors.textSecondary }]}>{item.remarks}</Text> : null}
+                      <Text style={[styles.historyBy, { color: colors.textSecondary }]}>Updated by {item.updatedByName}</Text>
+                    </View>
+                  </View>
+                ))}
+              </GradientCard>
+            )}
+
+            {/* Action Buttons for Officer / Admin */}
+            {isRejected ? (
+              <View style={styles.inactiveWorkflowBanner}>
+                <Ionicons name="ban-outline" size={20} color="#DC2626" />
+                <Text style={styles.inactiveWorkflowText}>
+                  This complaint is inactive (Invalid Issue image, raise the complaint with the appropriate image!). All further assignments, inspections, and lifecycle transitions are disabled.
+                </Text>
+              </View>
+            ) : isRoadDepartment(complaint.department || complaint.responsibleDepartment || 'Road Maintenance') ? (
+              <View style={styles.actionContainer}>
+                {/* If Pending Verification -> Go to Inspection Screen */}
+                {(complaint.status === 'Pending Field Verification' || complaint.status === 'Submitted') && (
+                  <TouchableOpacity
+                    style={styles.primaryActionBtn}
+                    onPress={() => router.push({ pathname: '/officer/inspection-screen', params: { id: complaint.id } })}
+                  >
+                    <Ionicons name="shield-checkmark" size={18} color={AppColors.white} />
+                    <Text style={styles.primaryActionText}>Perform Field Inspection</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* If Verified -> Assign to Authority */}
+                {complaint.status === 'Verified' && (
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { backgroundColor: '#4F46E5' }]}
+                    onPress={() => setShowAssignModal(true)}
+                  >
+                    <Ionicons name="business-outline" size={18} color={AppColors.white} />
+                    <Text style={styles.primaryActionText}>Assign to Maintenance Authority</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* If Assigned -> Start Repair */}
+                {(complaint.status === 'Assigned' || complaint.status === 'Accepted') && (
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { backgroundColor: '#D97706' }]}
+                    onPress={() => {
+                      setProgressActionType('In Progress');
+                      setProgressRemarks('Road repair crew deployed with materials on-site.');
+                      setShowProgressModal(true);
+                    }}
+                  >
+                    <Ionicons name="construct-outline" size={18} color={AppColors.white} />
+                    <Text style={styles.primaryActionText}>Start Repair Work</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* If In Progress -> Mark Resolved */}
+                {complaint.status === 'In Progress' && (
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { backgroundColor: AppColors.success }]}
+                    onPress={() => {
+                      setProgressActionType('Resolved');
+                      setProgressRemarks('Repair completed, area cleaned and restored.');
+                      setShowProgressModal(true);
+                    }}
+                  >
+                    <Ionicons name="checkmark-done-circle-outline" size={18} color={AppColors.white} />
+                    <Text style={styles.primaryActionText}>Mark Defect as Resolved</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={styles.referenceBanner}>
+                <Ionicons name="information-circle" size={20} color="#0369A1" />
+                <Text style={styles.referenceBannerText}>
+                  This complaint is routed to the {complaint.department || complaint.responsibleDepartment} Department for reference and inter-departmental analytics. Lifecycle actions are managed by the respective department.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
-        {/* Action Buttons for Officer / Admin */}
-        {isRejected ? (
-          <View style={styles.inactiveWorkflowBanner}>
-            <Ionicons name="ban-outline" size={20} color="#DC2626" />
-            <Text style={styles.inactiveWorkflowText}>
-              This complaint is inactive (Invalid Issue image, raise the complaint with the appropriate image!). All further assignments, inspections, and lifecycle transitions are disabled.
-            </Text>
+        {/* ========================================================================= */}
+        {/* TAB 3: BUDGET                                                             */}
+        {/* ========================================================================= */}
+        {activeTab === 'budget' && (
+          <View style={styles.tabContentContainer}>
+            {hasBudgetInfo ? (
+              <>
+                {/* Total Estimated Budget Banner */}
+                <GradientCard style={styles.budgetHeroCard}>
+                  <Text style={[styles.budgetHeroLabel, { color: '#065F46' }]}>Estimated Repair Budget</Text>
+                  <Text style={[styles.budgetHeroAmount, { color: '#047857' }]}>
+                    ₹{budgetAmount.toLocaleString('en-IN')}
+                  </Text>
+                  <Text style={[styles.budgetHeroSub, { color: colors.textSecondary }]}>
+                    {complaint.estimatedBudgetDesc || complaint.inspectionDetails?.estimatedBudgetDesc || 'Assessed based on municipal standard schedule of rates'}
+                  </Text>
+                </GradientCard>
+
+                {/* Timeline and Cost Parameters */}
+                <GradientCard style={styles.card}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Cost &amp; Schedule Parameters</Text>
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Estimated Duration</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.estimatedResolutionDuration || (complaint.estimatedResolutionDays ? `${complaint.estimatedResolutionDays} Days` : '3 Days')}
+                    </Text>
+                  </View>
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Expected Completion</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Scheduled after inspection'}
+                    </Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Approval Status</Text>
+                    <View style={styles.approvedPill}>
+                      <Ionicons name="checkmark-circle" size={13} color="#059669" />
+                      <Text style={styles.approvedPillText}>Sanctioned</Text>
+                    </View>
+                  </View>
+                </GradientCard>
+
+                {/* If Full Physical Inspection Details Exist (Roads) */}
+                {complaint.inspectionDetails ? (
+                  <GradientCard style={styles.card}>
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 8 }]}>Technical Road Inspection Summary</Text>
+                    <View style={styles.grid2}>
+                      <View>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Road Identified</Text>
+                        <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.inspectionDetails.roadName}</Text>
+                      </View>
+                      <View>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Maintenance Authority</Text>
+                        <Text style={styles.authoritySubText}>{complaint.inspectionDetails.maintenanceAuthority}</Text>
+                      </View>
+                    </View>
+
+                    <View style={[styles.grid2, { marginTop: 8 }]}>
+                      <View>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Verified Issue &amp; Severity</Text>
+                        <Text style={[styles.metaVal, { color: colors.textPrimary }]}>{complaint.inspectionDetails.verifiedIssue.toUpperCase()} ({complaint.inspectionDetails.severity})</Text>
+                      </View>
+                      <View>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Manual Estimated Budget</Text>
+                        <Text style={[styles.metaVal, { color: '#0F766E', fontWeight: '800' }]}>
+                          ₹{complaint.inspectionDetails.estimatedBudget.toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {complaint.inspectionDetails.inspectorRemarks ? (
+                      <View style={[styles.verificationNotesBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight, marginTop: 8 }]}>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Inspector On-Site Observations</Text>
+                        <Text style={[styles.notesText, { color: colors.textPrimary }]}>&ldquo;{complaint.inspectionDetails.inspectorRemarks}&rdquo;</Text>
+                      </View>
+                    ) : null}
+
+                    {(complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl) ? (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Field Inspector Observation Photo</Text>
+                        <CivicImage
+                          uri={complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl}
+                          style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }}
+                          resizeMode="cover"
+                        />
+                      </View>
+                    ) : null}
+
+                    <View style={{ marginTop: 8 }}>
+                      <PracticalBudgetBreakdownCard
+                        budgetBreakdown={complaint.inspectionDetails.budgetBreakdown || complaint.budgetBreakdown}
+                        issueType={complaint.inspectionDetails.verifiedIssue}
+                        severity={complaint.inspectionDetails.severity}
+                        estimatedBudget={complaint.inspectionDetails.estimatedBudget}
+                        estimatedBudgetDesc={complaint.inspectionDetails.budgetBreakdown?.description}
+                        title="Inspector Verified BOQ Allocation"
+                        showBoqToggle={true}
+                        initiallyExpanded={false}
+                      />
+                    </View>
+                  </GradientCard>
+                ) : (
+                  <PracticalBudgetBreakdownCard
+                    budgetBreakdown={complaint.budgetBreakdown}
+                    issueType={complaint.issueType}
+                    severity={complaint.priority || complaint.severity || 'MEDIUM'}
+                    estimatedBudget={budgetAmount}
+                    title="Estimated Standard BOQ Allocation"
+                    showBoqToggle={true}
+                    initiallyExpanded={false}
+                  />
+                )}
+              </>
+            ) : (
+              /* When Budget is Not Yet Available */
+              <GradientCard style={[styles.card, styles.emptyBudgetCard]}>
+                <View style={[styles.emptyBudgetIconWrap, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.9)' : '#CCFBF1' }]}>
+                  <Ionicons name="calculator-outline" size={44} color="#0D9488" />
+                </View>
+                <Text style={[styles.emptyBudgetTitle, { color: colors.textPrimary }]}>
+                  Budget estimate not available yet.
+                </Text>
+                <Text style={[styles.emptyBudgetMsg, { color: colors.textSecondary }]}>
+                  The repair budget, itemized materials, and labor costs will be calculated and approved following the physical on-site inspection by the Field Inspector.
+                </Text>
+                <View style={[styles.emptyBudgetStatusBadge, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Ionicons name="time-outline" size={14} color={isDark ? AppColors.primary : AppColors.primary} />
+                  <Text style={[styles.emptyBudgetStatusText, { color: colors.textPrimary }]}>
+                    Status: Pending Field Inspection Assessment
+                  </Text>
+                </View>
+              </GradientCard>
+            )}
           </View>
-        ) : isRoadDepartment(complaint.department || complaint.responsibleDepartment || 'Road Maintenance') ? (
-          <View style={styles.actionContainer}>
-            {/* If Pending Verification -> Go to Inspection Screen */}
-            {(complaint.status === 'Pending Field Verification' || complaint.status === 'Submitted') && (
-              <TouchableOpacity
-                style={styles.primaryActionBtn}
-                onPress={() => router.push({ pathname: '/officer/inspection-screen', params: { id: complaint.id } })}
-              >
-                <Ionicons name="shield-checkmark" size={18} color={AppColors.white} />
-                <Text style={styles.primaryActionText}>Perform Field Inspection</Text>
-              </TouchableOpacity>
-            )}
+        )}
 
-            {/* If Verified -> Assign to Authority */}
-            {complaint.status === 'Verified' && (
-              <TouchableOpacity
-                style={[styles.primaryActionBtn, { backgroundColor: '#4F46E5' }]}
-                onPress={() => setShowAssignModal(true)}
-              >
-                <Ionicons name="business-outline" size={18} color={AppColors.white} />
-                <Text style={styles.primaryActionText}>Assign to Maintenance Authority</Text>
-              </TouchableOpacity>
-            )}
+        {/* ========================================================================= */}
+        {/* TAB 4: DEPARTMENT DETAILS                                                 */}
+        {/* ========================================================================= */}
+        {activeTab === 'department' && (
+          <View style={styles.tabContentContainer}>
+            {!hasDepartmentInfo ? (
+              /* When Department is Not Yet Available */
+              <GradientCard style={[styles.card, styles.emptyBudgetCard]}>
+                <View style={[styles.emptyBudgetIconWrap, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.9)' : '#E0F2FE' }]}>
+                  <Ionicons name="business-outline" size={44} color={AppColors.primary} />
+                </View>
+                <Text style={[styles.emptyBudgetTitle, { color: colors.textPrimary }]}>
+                  Department details not available yet.
+                </Text>
+                <Text style={[styles.emptyBudgetMsg, { color: colors.textSecondary }]}>
+                  The designated department, jurisdictional authority, and responsible municipal officers will be assigned once the complaint is verified and routed.
+                </Text>
+                <View style={[styles.emptyBudgetStatusBadge, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Ionicons name="time-outline" size={14} color={AppColors.primary} />
+                  <Text style={[styles.emptyBudgetStatusText, { color: colors.textPrimary }]}>
+                    Status: Pending Department Routing
+                  </Text>
+                </View>
+              </GradientCard>
+            ) : (
+              <>
+                {/* Department & Routing Card */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>Department Routing</Text>
+                    {isMainOfficer && !isRejected && (
+                      <TouchableOpacity
+                        style={styles.changeDeptBtn}
+                        onPress={handleOpenDeptModal}
+                        accessibilityRole="button"
+                        accessibilityLabel="Change Department"
+                      >
+                        <Ionicons name="swap-horizontal" size={14} color={AppColors.primary} />
+                        <Text style={styles.changeDeptBtnText}>Change Dept</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
 
-            {/* If Assigned -> Start Repair */}
-            {(complaint.status === 'Assigned' || complaint.status === 'Accepted') && (
-              <TouchableOpacity
-                style={[styles.primaryActionBtn, { backgroundColor: '#D97706' }]}
-                onPress={() => {
-                  setProgressActionType('In Progress');
-                  setProgressRemarks('Road repair crew deployed with materials on-site.');
-                  setShowProgressModal(true);
-                }}
-              >
-                <Ionicons name="construct-outline" size={18} color={AppColors.white} />
-                <Text style={styles.primaryActionText}>Start Repair Work</Text>
-              </TouchableOpacity>
-            )}
+                  <View style={styles.deptStatusRow}>
+                    {(() => {
+                      const isMoved =
+                        complaint.routingStatus === 'Moved to Solid Waste Management' ||
+                        complaint.routingStatus === 'Moved' ||
+                        complaint.department === 'Solid Waste Management' ||
+                        complaint.departmentCode === 'SWM' ||
+                        (complaint.department && complaint.department !== 'Road Maintenance');
 
-            {/* If In Progress -> Mark Resolved */}
-            {complaint.status === 'In Progress' && (
-              <TouchableOpacity
-                style={[styles.primaryActionBtn, { backgroundColor: AppColors.success }]}
-                onPress={() => {
-                  setProgressActionType('Resolved');
-                  setProgressRemarks('Repair completed, area cleaned and restored.');
-                  setShowProgressModal(true);
-                }}
-              >
-                <Ionicons name="checkmark-done-circle-outline" size={18} color={AppColors.white} />
-                <Text style={styles.primaryActionText}>Mark Defect as Resolved</Text>
-              </TouchableOpacity>
+                      return (
+                        <>
+                          <View style={[
+                            styles.deptBadgeLarge,
+                            isMoved ? styles.deptBadgeLargeMoved : styles.deptBadgeLargeDirect
+                          ]}>
+                            <Ionicons
+                              name={isMoved ? 'swap-horizontal' : 'business'}
+                              size={16}
+                              color={isMoved ? '#0369A1' : colors.textPrimary}
+                            />
+                            <Text style={[
+                              styles.deptBadgeLargeText,
+                              { color: colors.textPrimary },
+                              isMoved ? styles.deptBadgeLargeTextMoved : {}
+                            ]}>
+                              {complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}
+                            </Text>
+                          </View>
+
+                          <View style={styles.routingTag}>
+                            <Text style={styles.routingTagText}>
+                              Routing Status: {complaint.routingStatus || (isMoved ? 'Moved to Solid Waste Management' : 'Direct Assignment')}
+                            </Text>
+                          </View>
+                        </>
+                      );
+                    })()}
+                  </View>
+
+                  <View style={[styles.divider, { backgroundColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]} />
+
+                  <View style={styles.deptDetailItem}>
+                    <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Assigned Officer</Text>
+                    <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
+                      {complaint.assignedOfficerName || complaint.assignedOfficer || 'Awaiting Assignment'}
+                    </Text>
+                  </View>
+
+                  {complaint.assignedInspectorName ? (
+                    <View style={styles.deptDetailItem}>
+                      <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Assigned Field Inspector</Text>
+                      <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
+                        {complaint.assignedInspectorName}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.deptDetailItem}>
+                    <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Department Source</Text>
+                    <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
+                      {complaint.departmentSource === 'description'
+                        ? 'Auto-detected from Citizen Description'
+                        : complaint.departmentSource === 'field_inspector'
+                        ? 'Field Inspector Correction'
+                        : complaint.departmentSource === 'officer'
+                        ? 'Officer Manual Reassignment'
+                        : 'AI Image Model'}
+                    </Text>
+                  </View>
+
+                  {complaint.departmentExplanation ? (
+                    <View style={styles.deptExplanationBox}>
+                      <Ionicons name="information-circle-outline" size={16} color="#0369A1" />
+                      <Text style={styles.deptExplanationText}>
+                        {complaint.departmentExplanation}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {complaint.departmentRemarks ? (
+                    <View style={[styles.remarksBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : colors.surfaceElevated, borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.borderLight }]}>
+                      <Text style={[styles.remarksLabel, { color: colors.textSecondary }]}>Department Update Remarks:</Text>
+                      <Text style={[styles.remarksText, { color: colors.textPrimary }]}>{complaint.departmentRemarks}</Text>
+                    </View>
+                  ) : null}
+
+                  {complaint.departmentChangedByName && (
+                    <Text style={[styles.infoSubtext, { color: colors.textSecondary }]}>
+                      Last modified by {complaint.departmentChangedByName}
+                      {complaint.departmentChangedAt ? ` on ${complaint.departmentChangedAt.toLocaleDateString('en-IN')}` : ''}
+                    </Text>
+                  )}
+                </GradientCard>
+
+                {/* Field Inspector Department Routing Action Card */}
+                {!isRejected && (
+                  <GradientCard style={styles.card}>
+                    <View style={[styles.boxHeader, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.borderLight }]}>
+                      <Ionicons name="git-branch-outline" size={18} color="#0D9488" />
+                      <Text style={[styles.boxTitle, { color: '#0D9488' }]}>Department Verification &amp; Transfer Actions</Text>
+                    </View>
+
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 12 }}>
+                      Inspectors and officers can confirm this complaint belongs to {complaint.department || complaint.responsibleDepartment} or re-route it if another department is involved.
+                    </Text>
+
+                    <View style={[styles.verificationBtnGroup, { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }]}>
+                      <TouchableOpacity
+                        style={styles.verifyConfirmBtn}
+                        onPress={() => setShowConfirmDeptModal(true)}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Verify Existing Department"
+                      >
+                        <Ionicons name="checkmark-circle-outline" size={16} color={AppColors.white} />
+                        <Text style={styles.verifyConfirmBtnText}>Verify Existing Department</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.verifyTransferBtn}
+                        onPress={() => {
+                          setTransferDeptCode(complaint.departmentCode === 'ROAD' ? 'SWM' : 'ROAD');
+                          setTransferRemarks('');
+                          setShowTransferDeptModal(true);
+                        }}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Another Department Involved"
+                      >
+                        <Ionicons name="swap-horizontal" size={16} color="#0369A1" />
+                        <Text style={styles.verifyTransferBtnText}>Another Dept Involved</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.verifyTransferBtn, { borderColor: '#D97706', backgroundColor: '#FFFBEB' }]}
+                        onPress={() => {
+                          setClarifyQuestion('');
+                          setShowClarificationModal(true);
+                        }}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Request Clarification"
+                      >
+                        <Ionicons name="help-circle-outline" size={16} color="#D97706" />
+                        <Text style={[styles.verifyTransferBtnText, { color: '#D97706' }]}>Request Clarification</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.verifyTransferBtn, { borderColor: '#2563EB', backgroundColor: '#EFF6FF' }]}
+                        onPress={() => {
+                          setClosureOutcome('No Major Repair Required');
+                          setClosureReasonText('');
+                          setShowClosureModal(true);
+                        }}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel="Close (No Repair)"
+                      >
+                        <Ionicons name="shield-checkmark-outline" size={16} color="#2563EB" />
+                        <Text style={[styles.verifyTransferBtnText, { color: '#2563EB' }]}>Close (No Repair)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </GradientCard>
+                )}
+
+                {/* Official Contact & Grievance Helpline */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderFlex}>
+                    <Ionicons name="call-outline" size={18} color={AppColors.primary} />
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Official Department Helpline</Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Toll-Free Helpline</Text>
+                    <Text style={[styles.rowValueHighlight, { color: AppColors.primary }]}>
+                      1800-425-4321
+                    </Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Control Room</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      0422-2302323
+                    </Text>
+                  </View>
+
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Operating Hours</Text>
+                    <Text style={[styles.rowValue, { color: colors.textSecondary }]}>
+                      Mon - Sat: 9:00 AM - 6:00 PM
+                    </Text>
+                  </View>
+                </GradientCard>
+              </>
             )}
-          </View>
-        ) : (
-          <View style={styles.referenceBanner}>
-            <Ionicons name="information-circle" size={20} color="#0369A1" />
-            <Text style={styles.referenceBannerText}>
-              This complaint is routed to the {complaint.department || complaint.responsibleDepartment} Department for reference and inter-departmental analytics. Lifecycle actions are managed by the respective department.
-            </Text>
           </View>
         )}
       </ScrollView>
@@ -1020,14 +1548,14 @@ export default function OfficerComplaintDetailsScreen() {
       {/* Authority Assignment Modal */}
       <Modal visible={showAssignModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.boxHeader}>
-              <Ionicons name="business" size={22} color={AppColors.primary} />
-              <Text style={styles.modalTitle}>Route to Maintenance Authority</Text>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="business" size={22} color={colors.buttonPrimary} />
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Route to Maintenance Authority</Text>
             </View>
 
-            <Text style={styles.modalSub}>
-              Complaint #{complaint.complaintId} • {complaint.region}
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.region}
             </Text>
 
             <ScrollView style={{ maxHeight: 200 }}>
@@ -1036,16 +1564,17 @@ export default function OfficerComplaintDetailsScreen() {
                   key={authOpt}
                   style={[
                     styles.authRow,
-                    selectedAuthority === authOpt && styles.authRowActive,
+                    { borderBottomColor: colors.borderLight },
+                    selectedAuthority === authOpt && { backgroundColor: colors.surfaceElevated },
                   ]}
                   onPress={() => setSelectedAuthority(authOpt)}
                 >
                   <Ionicons
                     name={selectedAuthority === authOpt ? 'radio-button-on' : 'radio-button-off'}
                     size={16}
-                    color={selectedAuthority === authOpt ? AppColors.primary : AppColors.textSecondary}
+                    color={selectedAuthority === authOpt ? colors.buttonPrimary : colors.textSecondary}
                   />
-                  <Text style={[styles.authText, selectedAuthority === authOpt && styles.authTextActive]}>
+                  <Text style={[styles.authText, { color: colors.textPrimary }, selectedAuthority === authOpt && { color: colors.buttonPrimary, fontWeight: '700' }]}>
                     {authOpt}
                   </Text>
                 </TouchableOpacity>
@@ -1053,22 +1582,23 @@ export default function OfficerComplaintDetailsScreen() {
             </ScrollView>
 
             <TextInput
-              style={[styles.modalInput, { marginTop: 12 }]}
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, marginTop: 12 }]}
               placeholder="Admin routing instructions..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={adminRemarks}
               onChangeText={setAdminRemarks}
             />
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowAssignModal(false)}
                 disabled={assigning}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalSubmitBtn}
+                style={[styles.modalSubmitBtn, { backgroundColor: colors.buttonPrimary }]}
                 onPress={handleAssignAuthority}
                 disabled={assigning}
               >
@@ -1086,21 +1616,22 @@ export default function OfficerComplaintDetailsScreen() {
       {/* Progress / Resolve Modal */}
       <Modal visible={showProgressModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.boxHeader}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
               <Ionicons
                 name={progressActionType === 'In Progress' ? 'construct' : 'checkmark-done-circle'}
                 size={22}
                 color={progressActionType === 'In Progress' ? '#D97706' : AppColors.success}
               />
-              <Text style={styles.modalTitle}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
                 {progressActionType === 'In Progress' ? 'Start Repair Work' : 'Mark Defect as Resolved'}
               </Text>
             </View>
 
             <TextInput
-              style={[styles.modalInput, { minHeight: 70, marginTop: 12 }]}
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, minHeight: 70, marginTop: 12 }]}
               placeholder="Execution remarks..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={progressRemarks}
               onChangeText={setProgressRemarks}
               multiline
@@ -1108,11 +1639,11 @@ export default function OfficerComplaintDetailsScreen() {
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowProgressModal(false)}
                 disabled={updatingProgress}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -1136,11 +1667,11 @@ export default function OfficerComplaintDetailsScreen() {
       {/* Reassign Department Modal */}
       <Modal visible={showDeptModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.modalHeaderRow}>
               <View>
-                <Text style={styles.modalTitle}>Reassign Department</Text>
-                <Text style={styles.modalSub}>Select target municipal department for this issue</Text>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Reassign Department</Text>
+                <Text style={[styles.modalSub, { color: colors.textSecondary }]}>Select target municipal department for this issue</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowDeptModal(false)}
@@ -1148,7 +1679,7 @@ export default function OfficerComplaintDetailsScreen() {
                 accessible
                 accessibilityLabel="Close department modal"
               >
-                <Ionicons name="close" size={22} color={AppColors.textPrimary} />
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
@@ -1158,7 +1689,11 @@ export default function OfficerComplaintDetailsScreen() {
                 return (
                   <TouchableOpacity
                     key={d.code}
-                    style={[styles.deptSelectItem, isSelected && styles.deptSelectItemActive]}
+                    style={[
+                      styles.deptSelectItem,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight },
+                      isSelected && { borderColor: colors.buttonPrimary, backgroundColor: isDark ? '#A0D8DF' : '#EFF6FF' },
+                    ]}
                     onPress={() => setSelectedDeptCode(d.code)}
                     activeOpacity={0.7}
                     accessible
@@ -1176,17 +1711,17 @@ export default function OfficerComplaintDetailsScreen() {
                           d.code === 'TWAD' ? 'water-outline' : 'trash-outline'
                         }
                         size={20}
-                        color={isSelected ? AppColors.primary : AppColors.textSecondary}
+                        color={isSelected ? colors.buttonPrimary : colors.textSecondary}
                       />
                       <View>
-                        <Text style={[styles.deptSelectName, isSelected && styles.deptSelectNameActive]}>
+                        <Text style={[styles.deptSelectName, { color: colors.textPrimary }, isSelected && { color: colors.buttonPrimary }]}>
                           {d.name}
                         </Text>
-                        <Text style={styles.deptSelectLabel}>{d.label}</Text>
+                        <Text style={[styles.deptSelectLabel, { color: colors.textSecondary }]}>{d.label}</Text>
                       </View>
                     </View>
-                    <View style={[styles.radioCircle, isSelected && styles.radioCircleSelected]}>
-                      {isSelected && <View style={styles.radioDot} />}
+                    <View style={[styles.radioCircle, { borderColor: colors.border }, isSelected && { borderColor: colors.buttonPrimary }]}>
+                      {isSelected && <View style={[styles.radioDot, { backgroundColor: colors.buttonPrimary }]} />}
                     </View>
                   </TouchableOpacity>
                 );
@@ -1194,29 +1729,29 @@ export default function OfficerComplaintDetailsScreen() {
             </ScrollView>
 
             <View style={{ marginBottom: 16 }}>
-              <Text style={styles.inputLabel}>Reason / Remarks (Optional)</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Reason / Remarks (Optional)</Text>
               <TextInput
-                style={styles.modalTextInput}
+                style={[styles.modalTextInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 placeholder="Why is this department being updated?"
                 value={deptRemarks}
                 onChangeText={setDeptRemarks}
                 multiline
                 numberOfLines={3}
-                placeholderTextColor={AppColors.placeholder}
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowDeptModal(false)}
                 disabled={updatingDept}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.modalSubmitBtn, updatingDept && styles.disabledBtn]}
+                style={[styles.modalSubmitBtn, { backgroundColor: colors.buttonPrimary }, updatingDept && styles.disabledBtn]}
                 onPress={handleConfirmDeptChange}
                 disabled={updatingDept}
               >
@@ -1234,11 +1769,11 @@ export default function OfficerComplaintDetailsScreen() {
       {/* Field Verification: Action A - Confirm Existing Department Modal */}
       <Modal visible={showConfirmDeptModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Confirm Existing Department</Text>
-                <Text style={styles.modalSub}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Confirm Existing Department</Text>
+                <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
                   Confirm that this issue belongs to {complaint.department || complaint.responsibleDepartment}
                 </Text>
               </View>
@@ -1248,45 +1783,45 @@ export default function OfficerComplaintDetailsScreen() {
                 accessible
                 accessibilityLabel="Close confirmation modal"
               >
-                <Ionicons name="close" size={22} color={AppColors.textPrimary} />
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.verificationConfirmSummaryBox}>
+            <View style={[styles.verificationConfirmSummaryBox, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
               <View style={styles.summaryItemRow}>
-                <Text style={styles.summaryItemLabel}>Department:</Text>
-                <Text style={styles.summaryItemValue}>{complaint.department || complaint.responsibleDepartment}</Text>
+                <Text style={[styles.summaryItemLabel, { color: colors.textSecondary }]}>Department:</Text>
+                <Text style={[styles.summaryItemValue, { color: colors.textPrimary }]}>{complaint.department || complaint.responsibleDepartment}</Text>
               </View>
               <View style={styles.summaryItemRow}>
-                <Text style={styles.summaryItemLabel}>Issue Type:</Text>
-                <Text style={styles.summaryItemValue}>{complaint.issueType}</Text>
+                <Text style={[styles.summaryItemLabel, { color: colors.textSecondary }]}>Issue Type:</Text>
+                <Text style={[styles.summaryItemValue, { color: colors.textPrimary }]}>{complaint.issueType}</Text>
               </View>
               <View style={styles.summaryItemRow}>
-                <Text style={styles.summaryItemLabel}>Priority:</Text>
-                <Text style={styles.summaryItemValue}>{complaint.priority || complaint.severity || 'LOW'}</Text>
+                <Text style={[styles.summaryItemLabel, { color: colors.textSecondary }]}>Priority:</Text>
+                <Text style={[styles.summaryItemValue, { color: colors.textPrimary }]}>{complaint.priority || complaint.severity || 'LOW'}</Text>
               </View>
             </View>
 
             <View style={{ marginBottom: 16 }}>
-              <Text style={styles.inputLabel}>Field Inspection Notes / Remarks (Optional)</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Field Inspection Notes / Remarks (Optional)</Text>
               <TextInput
-                style={styles.modalTextInput}
+                style={[styles.modalTextInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 placeholder="e.g. Verified on-site. Road defect belongs to municipal road wing."
                 value={verifyRemarks}
                 onChangeText={setVerifyRemarks}
                 multiline
                 numberOfLines={3}
-                placeholderTextColor={AppColors.placeholder}
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowConfirmDeptModal(false)}
                 disabled={confirmingDept}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1308,11 +1843,11 @@ export default function OfficerComplaintDetailsScreen() {
       {/* Field Verification: Action B - Another Department Involved / Transfer Modal */}
       <Modal visible={showTransferDeptModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Another Department Involved</Text>
-                <Text style={styles.modalSub}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Another Department Involved</Text>
+                <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
                   Select the appropriate department to re-route this complaint
                 </Text>
               </View>
@@ -1322,16 +1857,16 @@ export default function OfficerComplaintDetailsScreen() {
                 accessible
                 accessibilityLabel="Close transfer modal"
               >
-                <Ionicons name="close" size={22} color={AppColors.textPrimary} />
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.transferCurrentDeptBox}>
-              <Text style={styles.transferCurrentLabel}>Current Department:</Text>
-              <Text style={styles.transferCurrentValue}>{complaint.department || complaint.responsibleDepartment}</Text>
+            <View style={[styles.transferCurrentDeptBox, { backgroundColor: colors.surfaceElevated }]}>
+              <Text style={[styles.transferCurrentLabel, { color: colors.textSecondary }]}>Current Department:</Text>
+              <Text style={[styles.transferCurrentValue, { color: colors.textPrimary }]}>{complaint.department || complaint.responsibleDepartment}</Text>
             </View>
 
-            <Text style={[styles.inputLabel, { marginTop: 8, marginBottom: 6 }]}>Select New Department:</Text>
+            <Text style={[styles.inputLabel, { color: colors.textPrimary, marginTop: 8, marginBottom: 6 }]}>Select New Department:</Text>
             <ScrollView style={{ maxHeight: 180, marginBottom: 12 }}>
               {AVAILABLE_DEPARTMENTS.map(d => {
                 const isSelected = transferDeptCode === d.code;
@@ -1341,7 +1876,8 @@ export default function OfficerComplaintDetailsScreen() {
                     key={d.code}
                     style={[
                       styles.deptSelectItem,
-                      isSelected && styles.deptSelectItemActive,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight },
+                      isSelected && { borderColor: colors.buttonPrimary, backgroundColor: isDark ? '#A0D8DF' : '#EFF6FF' },
                       isCurrent && { opacity: 0.5 }
                     ]}
                     onPress={() => setTransferDeptCode(d.code)}
@@ -1365,17 +1901,17 @@ export default function OfficerComplaintDetailsScreen() {
                           d.code === 'BUILDING' ? 'business' : 'trash-outline'
                         }
                         size={20}
-                        color={isSelected ? AppColors.primary : AppColors.textSecondary}
+                        color={isSelected ? colors.buttonPrimary : colors.textSecondary}
                       />
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.deptSelectName, isSelected && styles.deptSelectNameActive]}>
+                        <Text style={[styles.deptSelectName, { color: colors.textPrimary }, isSelected && { color: colors.buttonPrimary }]}>
                           {d.name} {isCurrent ? '(Current)' : ''}
                         </Text>
-                        <Text style={styles.deptSelectLabel}>{d.label}</Text>
+                        <Text style={[styles.deptSelectLabel, { color: colors.textSecondary }]}>{d.label}</Text>
                       </View>
                     </View>
-                    <View style={[styles.radioCircle, isSelected && styles.radioCircleSelected]}>
-                      {isSelected && <View style={styles.radioDot} />}
+                    <View style={[styles.radioCircle, { borderColor: colors.border }, isSelected && { borderColor: colors.buttonPrimary }]}>
+                      {isSelected && <View style={[styles.radioDot, { backgroundColor: colors.buttonPrimary }]} />}
                     </View>
                   </TouchableOpacity>
                 );
@@ -1383,25 +1919,25 @@ export default function OfficerComplaintDetailsScreen() {
             </ScrollView>
 
             <View style={{ marginBottom: 16 }}>
-              <Text style={styles.inputLabel}>Reason for Re-routing / Transfer *</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Reason for Re-routing / Transfer *</Text>
               <TextInput
-                style={styles.modalTextInput}
+                style={[styles.modalTextInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 placeholder="e.g. Issue is caused by blocked drainage near the road."
                 value={transferRemarks}
                 onChangeText={setTransferRemarks}
                 multiline
                 numberOfLines={3}
-                placeholderTextColor={AppColors.placeholder}
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowTransferDeptModal(false)}
                 disabled={transferringDept}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1413,6 +1949,192 @@ export default function OfficerComplaintDetailsScreen() {
                   <ActivityIndicator color={AppColors.white} />
                 ) : (
                   <Text style={styles.modalSubmitText}>Transfer Complaint</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Authority Deletion Modal */}
+      <Modal visible={showDeleteModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="trash" size={22} color="#DC2626" />
+              <Text style={[styles.modalTitle, { color: '#991B1B' }]}>Remove Complaint</Text>
+            </View>
+
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.issueType}
+            </Text>
+
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+              This will remove the complaint from all active views across the application. The citizen will automatically receive an in-app notification with your reason.
+            </Text>
+
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, height: 80, textAlignVertical: 'top', marginTop: 6 }]}
+              placeholder="Reason for deletion / clarification (Required)..."
+              placeholderTextColor={colors.inputPlaceholder}
+              value={deletionReason}
+              onChangeText={setDeletionReason}
+              multiline
+              numberOfLines={3}
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setShowDeleteModal(false)}
+                disabled={deletingComplaint}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalSubmitBtn,
+                  { backgroundColor: '#DC2626' },
+                  (!deletionReason.trim() || deletingComplaint) && { opacity: 0.5 },
+                ]}
+                onPress={handleAuthorityDelete}
+                disabled={!deletionReason.trim() || deletingComplaint}
+              >
+                {deletingComplaint ? (
+                  <ActivityIndicator color={AppColors.white} />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Confirm & Notify</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Inspector Clarification Modal */}
+      <Modal visible={showClarificationModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: '#F59E0B' }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="help-circle" size={22} color="#D97706" />
+              <Text style={[styles.modalTitle, { color: '#D97706' }]}>Request Citizen Clarification</Text>
+            </View>
+
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.issueType}
+            </Text>
+
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+              Specify the clarification needed from the citizen. The complaint status will update to "Needs Clarification", and the citizen will be notified via in-app alert and email.
+            </Text>
+
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, height: 80, textAlignVertical: 'top', marginTop: 6 }]}
+              placeholder="e.g. Please clarify exact landmark near bus stop or provide additional defect photo..."
+              placeholderTextColor={colors.inputPlaceholder}
+              value={clarifyQuestion}
+              onChangeText={setClarifyQuestion}
+              multiline
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setShowClarificationModal(false)}
+                disabled={submittingClarify}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, { backgroundColor: '#D97706' }, (!clarifyQuestion.trim() || submittingClarify) && styles.disabledBtn]}
+                onPress={handleInspectorRequestClarification}
+                disabled={!clarifyQuestion.trim() || submittingClarify}
+              >
+                {submittingClarify ? (
+                  <ActivityIndicator color={AppColors.white} />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Send Clarification</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Inspector Closure Modal */}
+      <Modal visible={showClosureModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: '#2563EB' }]}>
+            <View style={[styles.boxHeader, { borderBottomColor: colors.borderLight }]}>
+              <Ionicons name="shield-checkmark" size={22} color="#2563EB" />
+              <Text style={[styles.modalTitle, { color: '#2563EB' }]}>Close Complaint (No Major Repair)</Text>
+            </View>
+
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Complaint {complaint.complaintId} • {complaint.issueType}
+            </Text>
+
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+              Select the closure outcome and record on-site inspection findings. The citizen will be notified of closure with your reason.
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
+              {['No Major Repair Required', 'Minor Issue Resolved on Site', 'Routine Wear (Monitored)', 'Addressed in Ongoing Project'].map(outcome => (
+                <TouchableOpacity
+                  key={outcome}
+                  style={[
+                    {
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.border,
+                    },
+                    closureOutcome === outcome && { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+                  ]}
+                  onPress={() => setClosureOutcome(outcome)}
+                >
+                  <Text
+                    style={[
+                      { fontSize: 12, color: colors.textPrimary },
+                      closureOutcome === outcome && { color: AppColors.white, fontWeight: '700' },
+                    ]}
+                  >
+                    {outcome}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText, height: 75, textAlignVertical: 'top', marginTop: 6 }]}
+              placeholder="Inspection findings & reason for closure (Required)..."
+              placeholderTextColor={colors.inputPlaceholder}
+              value={closureReasonText}
+              onChangeText={setClosureReasonText}
+              multiline
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setShowClosureModal(false)}
+                disabled={submittingClosure}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, { backgroundColor: '#2563EB' }, (!closureReasonText.trim() || submittingClosure) && styles.disabledBtn]}
+                onPress={handleInspectorCloseComplaint}
+                disabled={!closureReasonText.trim() || submittingClosure}
+              >
+                {submittingClosure ? (
+                  <ActivityIndicator color={AppColors.white} />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Close Complaint</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -2170,5 +2892,145 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B7280',
     lineHeight: 18,
+  },
+  tabBar: {
+    borderBottomWidth: 1,
+  },
+  tabScrollContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginRight: 6,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+    gap: 6,
+  },
+  activeTabBtn: {
+    // borderBottomColor set dynamically
+  },
+  tabBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  activeTabBtnText: {
+    fontWeight: '800',
+  },
+  tabContentContainer: {
+    gap: 12,
+  },
+  budgetHeroCard: {
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1.5,
+  },
+  budgetHeroLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  budgetHeroAmount: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#047857',
+    marginVertical: 4,
+  },
+  budgetHeroSub: {
+    fontSize: 12,
+    color: '#065F46',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  emptyBudgetCard: {
+    alignItems: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 20,
+  },
+  emptyBudgetIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#CCFBF1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyBudgetTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyBudgetMsg: {
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    maxWidth: 320,
+    marginBottom: 16,
+  },
+  emptyBudgetStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  emptyBudgetStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  approvedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  approvedPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  rowLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  rowValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'right',
+    flex: 1.5,
+  },
+  rowValueHighlight: {
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'right',
+    flex: 1.5,
+  },
+  cardHeaderFlex: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
   },
 });

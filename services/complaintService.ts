@@ -7,6 +7,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -33,7 +34,16 @@ import {
   formatResolutionDate,
   type EstimatedDurationResult,
 } from './resolutionDuration';
+import {
+  type CivicPredictionContract,
+  type ValidationStatus,
+  type PredictionStatus,
+  type PredictionState,
+  formatDisplayIssueName,
+} from './predictionContract';
 import * as Location from 'expo-location';
+import { createNotification } from './notificationService';
+import { checkDescriptionHasNoIssue } from './descriptionClassifier';
 
 export type ComplaintStatus =
   | 'Submitted'
@@ -47,6 +57,7 @@ export type ComplaintStatus =
   | 'Citizen Verification'
   | 'Closed'
   | 'Rejected'
+  | 'Needs Clarification'
   | 'Dissimilar Image to the Issue'
   | 'Invalid Issue image, raise the complaint with the appropriate image!'
   | 'Invalid Image, give valid Issue Image!'
@@ -65,6 +76,8 @@ export function isInvalidImageComplaint(statusOrComplaint?: any): boolean {
   const insp = statusOrComplaint.inspectionStatus;
   const rejType = statusOrComplaint.rejectionType;
   const issue = statusOrComplaint.issueType;
+  const predState = statusOrComplaint.predictionState;
+  const valStatus = statusOrComplaint.validationStatus;
   return s === 'Invalid Image, give valid Issue Image!' ||
          s === 'Invalid Issue image, raise the complaint with the appropriate image!' ||
          s === 'Dissimilar Image to the Issue' ||
@@ -72,6 +85,8 @@ export function isInvalidImageComplaint(statusOrComplaint?: any): boolean {
          insp === 'INVALID' ||
          rejType === 'IMAGE_MISMATCH' ||
          rejType === 'INVALID_IMAGE' ||
+         predState === 'INVALID_IMAGE' ||
+         valStatus === 'unrelated_image' ||
          (typeof issue === 'string' && issue.includes('Invalid'));
 }
 
@@ -155,6 +170,9 @@ export interface Complaint {
   // AI Model Prediction Fields
   issueType: string;           // 'alligator cracking' | 'cracking' | 'pothole' | 'no_major_issue'
   confidence: number;          // 0–100 percentage
+  confidenceRaw?: number;      // 0-1 raw probability/score
+  confidenceType?: string;     // Type of confidence assessment
+  predictedClass?: string | null;
   priority: string;            // 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE'
   severity: string;            // Initial severity from AI priority
   estimatedBudget?: number;    // Estimated budget in INR
@@ -203,6 +221,16 @@ export interface Complaint {
   AI_confidence?: number;
   AI_validation?: string;
   AI_timestamp?: Date;
+  predictionState?: PredictionState;
+  priorityReason?: string;
+  displayIssueName?: string;
+  trainingCandidateStatus?: 'unverified_candidate' | 'inspector_verified' | 'rejected_candidate';
+  agreementStatus?: 'AGREED' | 'DISAGREED' | 'NOT_APPLICABLE';
+  modelVersion?: string;
+  originalPrediction?: string | null;
+  originalScore?: number;
+  imageValidationOutcome?: string;
+  feedbackTimestamp?: Date;
 
   // Lifecycle Status
   status: ComplaintStatus;
@@ -256,14 +284,38 @@ export interface Complaint {
   // Citizen Final Verification
   citizenVerification?: CitizenVerificationDetails;
 
-  // Audit History
+  // Clarification Workflow
+  clarificationRequest?: string;
+  clarificationRequestedAt?: Date;
+  clarificationRequestedBy?: string;
+  clarificationRequestedById?: string;
+  citizenClarificationResponse?: string;
+  citizenClarificationRespondedAt?: Date;
+
+  // Closure Workflow
+  closureReason?: string;
+  closureOutcome?: string;
+  closedAt?: Date;
+  closedBy?: string;
+  closedById?: string;
+  closedByRole?: string;
+
+  // Audit & Deletion History
   statusHistory?: StatusHistoryItem[];
+  isDeleted?: boolean;
+  deletedAt?: Date;
+  deletedBy?: string;
+  deletedByRole?: 'citizen' | 'officer' | 'authority' | 'admin';
+  deletionReason?: string;
 
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface NewComplaintData {
+  complaintId?: string;
+  clientSubmissionId?: string;
+  predictionContract?: CivicPredictionContract;
   citizenId: string;
   citizenEmail: string;
   imageUri: string;
@@ -274,9 +326,16 @@ export interface NewComplaintData {
   locationSource?: 'current' | 'map';
   locationAddress?: string;
   issueType: string;
+  displayIssueName?: string;
+  predictedClass?: string | null;
   confidence: number;
+  confidenceRaw?: number;
+  confidenceType?: string;
   priority: string;
   severity: string;
+  priorityReason?: string;
+  predictionState?: PredictionState;
+  modelVersion?: string;
   department?: string;
   responsibleDepartment?: string;
   departmentCode?: string;
@@ -306,6 +365,20 @@ export interface NewComplaintData {
   fieldVerificationStatus?: FieldVerificationStatus;
   status?: ComplaintStatus;
   inspectionStatus?: InspectionStatus;
+
+  // Clarification & Closure fields
+  clarificationRequest?: string;
+  clarificationRequestedAt?: Date;
+  clarificationRequestedBy?: string;
+  clarificationRequestedById?: string;
+  citizenClarificationResponse?: string;
+  citizenClarificationRespondedAt?: Date;
+  closureReason?: string;
+  closureOutcome?: string;
+  closedAt?: Date;
+  closedBy?: string;
+  closedById?: string;
+  closedByRole?: string;
   rejectionReason?: string;
   rejectionType?: string;
   rejectedAt?: Date;
@@ -437,10 +510,26 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
   const deptCode = data.departmentCode || getDepartmentCode(activeDepartment);
   const defaultIssue = isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : 'pothole';
 
+  const canonicalName = data.displayIssueName
+    ? formatDisplayIssueName(data.displayIssueName)
+    : formatDisplayIssueName(data.issueType || data.detectedIssue || data.AI_prediction || defaultIssue);
+
+  const canonicalPriority = (data.priority || data.severity || 'LOW').toUpperCase();
+
+  const rawConf = typeof data.confidence === 'number'
+    ? data.confidence
+    : (typeof data.AI_confidence === 'number'
+      ? data.AI_confidence
+      : (typeof data.detectionConfidence === 'number' ? data.detectionConfidence : 0));
+  const normalizedConfidence = rawConf > 0 && rawConf <= 1 ? Math.round(rawConf * 100) : Math.round(rawConf);
+  const normalizedConfidenceRaw = typeof data.confidenceRaw === 'number'
+    ? data.confidenceRaw
+    : (normalizedConfidence > 0 ? normalizedConfidence / 100 : 0);
+
   const createdAtDate = parseDate(data.createdAt) || new Date();
   const calculatedDuration = getEstimatedResolutionDuration(
-    data.priority || data.severity || 'LOW',
-    data.issueType || defaultIssue,
+    canonicalPriority,
+    canonicalName,
     activeDepartment,
     createdAtDate
   );
@@ -465,27 +554,34 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
      data.status === 'Rejected' || data.status === 'Dissimilar Image to the Issue' ? 'rejected' :
      data.routingStatus?.startsWith('Moved') ? 'transferred' : 'pending');
 
-  return {
-    id,
-    complaintId: data.complaintId || 'CE0000',
-    citizenId: data.citizenId || '',
-    citizenEmail: data.citizenEmail || data.email || '',
-    imageUri: (data.imageUri || data.imageUrl || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
-    imageUrl: (data.imageUrl || data.imageUri || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
-    description: data.description || '',
-    latitude: typeof data.latitude === 'number' ? data.latitude : (typeof data.lat === 'number' ? data.lat : 0),
-    longitude: typeof data.longitude === 'number' ? data.longitude : (typeof data.long === 'number' ? data.long : 0),
-    region: (data.region || 'Gandhipuram') as CoimbatoreRegion,
-    locationSource: data.locationSource || 'current',
-    locationAddress: data.locationAddress || '',
+    return {
+      id,
+      complaintId: data.complaintId || 'CE0000',
+      citizenId: data.citizenId || '',
+      citizenEmail: data.citizenEmail || data.email || '',
+      imageUri: (data.imageUri || data.imageUrl || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
+      imageUrl: (data.imageUrl || data.imageUri || data.image || data.photoUrl || data.cloudinaryUrl || '').trim(),
+      description: data.description || '',
+      latitude: typeof data.latitude === 'number' ? data.latitude : (typeof data.lat === 'number' ? data.lat : 0),
+      longitude: typeof data.longitude === 'number' ? data.longitude : (typeof data.long === 'number' ? data.long : 0),
+      region: (data.region || 'Gandhipuram') as CoimbatoreRegion,
+      locationSource: data.locationSource || 'current',
+      locationAddress: data.locationAddress || '',
 
-    issueType: data.issueType || defaultIssue,
-    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
-    priority: data.priority || data.severity || 'LOW',
-    severity: data.severity || data.priority || 'LOW',
-    estimatedBudget: typeof data.estimatedBudget === 'number' ? data.estimatedBudget : data.inspectionDetails?.estimatedBudget,
-    estimatedBudgetDesc: data.estimatedBudgetDesc || data.inspectionDetails?.estimatedBudgetDesc,
-    budgetBreakdown: data.budgetBreakdown || data.inspectionDetails?.budgetBreakdown,
+      issueType: canonicalName,
+      confidence: normalizedConfidence,
+      confidenceRaw: normalizedConfidenceRaw,
+      confidenceType: data.confidenceType || 'vision_assessment',
+      predictedClass: data.predictedClass ?? (data.displayIssueName || data.issueType || canonicalName),
+      priority: canonicalPriority,
+      severity: canonicalPriority,
+      priorityReason: data.priorityReason,
+      displayIssueName: canonicalName,
+      predictionState: data.predictionState,
+      modelVersion: data.modelVersion || 'CivicEye-Vision-Engine-v3',
+      estimatedBudget: typeof data.estimatedBudget === 'number' ? data.estimatedBudget : data.inspectionDetails?.estimatedBudget,
+      estimatedBudgetDesc: data.estimatedBudgetDesc || data.inspectionDetails?.estimatedBudgetDesc,
+      budgetBreakdown: data.budgetBreakdown || data.inspectionDetails?.budgetBreakdown,
 
     department: activeDepartment,
     responsibleDepartment: isNonRoad ? activeDepartment : (data.responsibleDepartment || activeDepartment),
@@ -527,6 +623,12 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     AI_confidence: data.AI_confidence ?? data.confidence,
     AI_validation: data.AI_validation ?? data.roadValidationResult,
     AI_timestamp: parseDate(data.AI_timestamp),
+    trainingCandidateStatus: data.trainingCandidateStatus,
+    agreementStatus: data.agreementStatus,
+    originalPrediction: data.originalPrediction,
+    originalScore: data.originalScore,
+    imageValidationOutcome: data.imageValidationOutcome,
+    feedbackTimestamp: parseDate(data.feedbackTimestamp),
 
     status: (data.status as ComplaintStatus) || 'Pending Field Verification',
     inspectionStatus: data.inspectionStatus,
@@ -572,16 +674,373 @@ function parseComplaintDoc(d: QueryDocumentSnapshot<DocumentData> | DocumentData
     rejectedAt: parseDate(data.rejectedAt),
 
     citizenVerification,
+    clarificationRequest: data.clarificationRequest,
+    clarificationRequestedAt: parseDate(data.clarificationRequestedAt),
+    clarificationRequestedBy: data.clarificationRequestedBy,
+    clarificationRequestedById: data.clarificationRequestedById,
+    citizenClarificationResponse: data.citizenClarificationResponse,
+    citizenClarificationRespondedAt: parseDate(data.citizenClarificationRespondedAt),
+
+    closureReason: data.closureReason,
+    closureOutcome: data.closureOutcome,
+    closedAt: parseDate(data.closedAt),
+    closedBy: data.closedBy,
+    closedById: data.closedById,
+    closedByRole: data.closedByRole,
+
     statusHistory,
+
+    isDeleted: !!data.isDeleted,
+    deletedAt: parseDate(data.deletedAt),
+    deletedBy: data.deletedBy,
+    deletedByRole: data.deletedByRole,
+    deletionReason: data.deletionReason,
 
     createdAt: createdAtDate,
     updatedAt: parseDate(data.updatedAt) || new Date(),
   };
 }
 
-function generateComplaintId(): string {
-  const num = Math.floor(1000 + Math.random() * 9000);
-  return `CE${num}`;
+/**
+ * Format system date dynamically in Asia/Kolkata timezone (YYYYMMDD)
+ */
+export function getKolkataDateKey(customDate: Date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(customDate).replace(/-/g, '');
+}
+
+/**
+ * Concurrency-safe human-readable Complaint ID generator: CE-YYYYMMDD-000001
+ * Uses Firestore transaction atomic counter per calendar date in Asia/Kolkata timezone.
+ * Guarantees zero collisions, uniqueness under concurrent submissions,
+ * and stable readable IDs.
+ */
+export async function generateMeaningfulComplaintId(customDate: Date = new Date()): Promise<string> {
+  const dateKey = getKolkataDateKey(customDate);
+
+  let attempts = 0;
+  const maxAttempts = 6;
+  while (attempts < maxAttempts) {
+    try {
+      const counterRef = doc(db, 'counters', `complaints_${dateKey}`);
+      const nextSeq = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(counterRef);
+        let current = 0;
+        if (snap.exists() && typeof snap.data().lastSequence === 'number') {
+          current = snap.data().lastSequence;
+        }
+        const next = current + 1;
+        transaction.set(counterRef, {
+          dateKey,
+          lastSequence: next,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        return next;
+      });
+
+      const complaintId = `CE-${dateKey}-${String(nextSeq).padStart(6, '0')}`;
+      console.log(`[complaintService] Concurrency-safe ID allocated: ${complaintId}`);
+      return complaintId;
+    } catch (err) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        console.warn('[complaintService] Firestore transaction failed after retries, trying backend endpoint:', err);
+        break;
+      }
+      await new Promise(r => setTimeout(r, 40 * attempts + Math.random() * 80));
+    }
+  }
+
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/api/next-complaint-id?dateKey=${dateKey}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.complaintId) return data.complaintId;
+    }
+  } catch (apiErr) {
+    console.warn('[complaintService] Backend endpoint fallback note:', apiErr);
+  }
+  // Fail-hard policy: NEVER fall back to random/timestamp/fake ID. Throw an explicit error to prevent corrupted submissions.
+  throw new Error(`Failed to allocate a valid sequential complaint ID for date ${dateKey}. Please check your connection and retry.`);
+}
+
+// Backward-compatibility alias
+export const generateComplaintId = generateMeaningfulComplaintId;
+
+/**
+ * Dispatch submission confirmation email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendComplaintSubmissionEmail(params: {
+  complaintId: string;
+  issueType: string;
+  description: string;
+  citizenEmail: string;
+  priority?: string;
+  department?: string;
+  status?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'submission',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        description: params.description,
+        citizenEmail: params.citizenEmail,
+        priority: params.priority || 'Standard',
+        department: params.department || 'Road Maintenance',
+        newStatus: params.status || 'Submitted',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Submission email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Submission email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch status update email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendStatusUpdateEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  previousStatus: string;
+  newStatus: string;
+  statusRemarks?: string;
+  department?: string;
+  updatedByName?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'status_update',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        previousStatus: params.previousStatus,
+        newStatus: params.newStatus,
+        statusRemarks: params.statusRemarks,
+        department: params.department || 'Road Maintenance',
+        updatedByName: params.updatedByName || 'Municipal Officer',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Status update email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Status update email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch complaint deletion email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint deletion is never rolled back.
+ */
+export async function sendComplaintDeletionEmail(params: {
+  complaintId: string;
+  issueType?: string;
+  citizenEmail: string;
+  initiatedBy: 'citizen' | 'authority';
+  deletionReason?: string;
+  deletedByName?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'deletion',
+        complaintId: params.complaintId,
+        issueType: params.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: params.citizenEmail,
+        initiatedBy: params.initiatedBy,
+        deletionReason: params.deletionReason,
+        deletedByName: params.deletedByName,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Deletion email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Deletion email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch clarification email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendClarificationEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  inspectorName?: string;
+  clarificationQuestion: string;
+  department?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'clarification',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        inspectorName: params.inspectorName || 'Field Inspector',
+        clarificationQuestion: params.clarificationQuestion,
+        department: params.department || 'Road Maintenance',
+        newStatus: 'Needs Clarification',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Clarification email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Clarification email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Dispatch closure email to citizen via backend endpoint.
+ * Handles failure gracefully so complaint storage is never blocked.
+ */
+export async function sendClosureEmail(params: {
+  complaintId: string;
+  issueType: string;
+  citizenEmail: string;
+  inspectorName?: string;
+  closureReason: string;
+  closureOutcome?: string;
+  inspectorRemarks?: string;
+  department?: string;
+}): Promise<boolean> {
+  if (!params.citizenEmail || !params.citizenEmail.includes('@')) {
+    return false;
+  }
+  try {
+    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'closure',
+        complaintId: params.complaintId,
+        issueType: params.issueType,
+        citizenEmail: params.citizenEmail,
+        inspectorName: params.inspectorName || 'Field Inspector',
+        closureReason: params.closureReason,
+        closureOutcome: params.closureOutcome || 'No Major Repair Required',
+        statusRemarks: params.inspectorRemarks || params.closureReason,
+        department: params.department || 'Road Maintenance',
+        newStatus: 'Closed',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (response.ok) {
+      console.log(`[complaintService] Closure email successfully triggered for ${params.citizenEmail}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[complaintService] Closure email error (handled safely):', error);
+    return false;
+  }
+}
+
+/**
+ * Helper to trigger both in-app notification and email on status change.
+ */
+export async function notifyCitizenStatusChange(params: {
+  complaintId: string;
+  docId: string;
+  citizenId?: string;
+  citizenEmail?: string;
+  issueType: string;
+  previousStatus: string;
+  newStatus: string;
+  remarks?: string;
+  department?: string;
+  updatedByName?: string;
+}): Promise<void> {
+  // 1. In-app notification
+  if (params.citizenId) {
+    try {
+      await createNotification({
+        userId: params.citizenId,
+        recipientId: params.citizenId,
+        recipientRole: 'citizen',
+        complaintId: params.docId,
+        title: `Complaint Status: ${params.newStatus}`,
+        message: `Your complaint ${params.complaintId} (${params.issueType}) is now "${params.newStatus}". ${params.remarks ? `Remarks: ${params.remarks}` : ''}`,
+        type: params.newStatus === 'Resolved' ? 'work_resolved' : params.newStatus === 'Verified' ? 'field_verified' : 'work_in_progress',
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] In-app notification error (handled safely):', notifErr);
+    }
+  }
+
+  // 2. Email notification
+  if (params.citizenEmail) {
+    sendStatusUpdateEmail({
+      complaintId: params.complaintId,
+      issueType: params.issueType,
+      citizenEmail: params.citizenEmail,
+      previousStatus: params.previousStatus,
+      newStatus: params.newStatus,
+      statusRemarks: params.remarks,
+      department: params.department,
+      updatedByName: params.updatedByName,
+    }).catch(err => {
+      console.warn('[complaintService] Status update email error (handled safely):', err);
+    });
+  }
 }
 
 /**
@@ -596,40 +1055,13 @@ export async function sendSWMNotificationEmail(params: {
   department?: string;
   routingStatus?: string;
 }): Promise<boolean> {
-  if (!params.citizenEmail) {
-    console.warn('[complaintService] No citizen email provided for SWM notification.');
-    return false;
-  }
-
-  try {
-    const apiUrl = `${getApiBaseUrl()}/api/send-email`;
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        complaintId: params.complaintId,
-        issueType: params.issueType,
-        description: params.description,
-        citizenEmail: params.citizenEmail,
-        department: params.department || 'Solid Waste Management',
-        routingStatus: params.routingStatus || 'Moved to Solid Waste Management',
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json().catch(() => ({}));
-      console.log('[complaintService] SWM notification email triggered successfully:', data);
-      return true;
-    } else {
-      console.warn('[complaintService] Server returned non-ok status for email notification:', response.status);
-      return false;
-    }
-  } catch (error) {
-    console.warn('[complaintService] Email endpoint error (handled gracefully):', error);
-    return false;
-  }
+  return sendComplaintSubmissionEmail({
+    complaintId: params.complaintId,
+    issueType: params.issueType,
+    description: params.description,
+    citizenEmail: params.citizenEmail,
+    department: params.department || 'Solid Waste Management',
+  });
 }
 
 // Backward-compatibility alias
@@ -698,8 +1130,55 @@ export interface SubmitComplaintResult {
  * Automatically handles multi-department routing, notifications, and field inspector assignment queue.
  */
 export async function submitComplaint(data: NewComplaintData): Promise<SubmitComplaintResult> {
-  const complaintId = generateComplaintId();
-  const isDissimilar = data.status === 'Dissimilar Image to the Issue' || data.analysisStatus === 'dissimilar_image' || (data.roadValidationResult === 'not_road' && data.rejectionType === 'IMAGE_MISMATCH');
+  // Idempotency / duplicate submission protection:
+  // 1. If clientSubmissionId provided, check for existing complaint
+  if (data.clientSubmissionId) {
+    try {
+      const q = query(collection(db, 'complaints'), where('clientSubmissionId', '==', data.clientSubmissionId));
+      const existingSnap = await getDocs(q);
+      if (!existingSnap.empty) {
+        const docSnap = existingSnap.docs[0];
+        console.log(`[complaintService] Duplicate prevented via clientSubmissionId (${data.clientSubmissionId}). Reusing: ${docSnap.data().complaintId}`);
+        return { id: docSnap.id, complaintId: docSnap.data().complaintId };
+      }
+    } catch (dedupErr) {
+      console.warn('[complaintService] Dedup check note:', dedupErr);
+    }
+  }
+
+  // 2. If complaintId already allocated, prevent duplicate creation
+  if (data.complaintId) {
+    try {
+      const q = query(collection(db, 'complaints'), where('complaintId', '==', data.complaintId));
+      const existingSnap = await getDocs(q);
+      if (!existingSnap.empty) {
+        const docSnap = existingSnap.docs[0];
+        console.log(`[complaintService] Duplicate prevented via complaintId (${data.complaintId}). Reusing: ${docSnap.id}`);
+        return { id: docSnap.id, complaintId: data.complaintId };
+      }
+    } catch (dedupErr) {
+      console.warn('[complaintService] Dedup check note:', dedupErr);
+    }
+  }
+
+  // Pre-persistence validation gate: Block invalid submissions before generating complaint ID or creating records
+  const noIssueCheck = checkDescriptionHasNoIssue(data.description || '');
+  if (noIssueCheck.isNoIssue) {
+    throw new Error('Validation Failed: Your description does not report a civic problem. Please provide a description of the actual issue and upload a relevant image.');
+  }
+
+  if (data.predictionState === 'INVALID_IMAGE' || data.status === 'Dissimilar Image to the Issue') {
+    throw new Error('Validation Failed: Invalid Issue Image. The uploaded image does not match the reported civic issue. Please upload a relevant image and try again.');
+  }
+
+  if ((data.predictionState === 'NO_MAJOR_ISSUE' || data.issueType === 'no_major_issue') && data.issueType !== 'Road Surface (Inspection Requested)') {
+    throw new Error('Validation Failed: No Issue Found. The uploaded image does not show a clearly identifiable civic issue. Please upload an image showing the problem you want to report.');
+  }
+
+  const complaintId = data.complaintId || await generateMeaningfulComplaintId();
+  const isDissimilar = (data.status as string) === 'Dissimilar Image to the Issue' || data.analysisStatus === 'dissimilar_image' || (data.roadValidationResult === 'not_road' && (data as any).rejectionType === 'IMAGE_MISMATCH') || (data.predictionState as string) === 'INVALID_IMAGE';
+  const isCleanRoadRequested = data.issueType === 'Road Surface (Inspection Requested)' || data.displayIssueName === 'Road Surface (Inspection Requested)';
+  const isNoMajorIssue = data.analysisStatus === 'no_major_issue' || data.issueType === 'no_major_issue' || data.predictionState === 'NO_MAJOR_ISSUE' || data.displayIssueName === 'Clean Road (No Major Issue)' || data.displayIssueName === 'No Major Issue';
   const activeDept = data.department || data.responsibleDepartment || 'Road Maintenance';
   const isRoad = isRoadDepartment({
     department: activeDept,
@@ -714,7 +1193,7 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
   const initialStatus: ComplaintStatus = isDissimilar ? 'Dissimilar Image to the Issue' : (data.status || 'Submitted');
 
   console.log('[ROUTING] Department:', activeDept, 'Code:', deptCode, 'Status:', routingStatus, 'ComplaintStatus:', initialStatus);
-  console.log('[FIRESTORE] Saving complaint');
+  console.log('[FIRESTORE] Saving complaint:', complaintId);
 
   const initialHistoryItem = {
     id: `hist-${Date.now()}`,
@@ -730,12 +1209,78 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     timestamp: new Date().toISOString(),
   };
 
-  const defaultIssue = isDissimilar
-    ? (data.issueType || 'Dissimilar Image to the Issue')
-    : (isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : 'pothole');
+  // Preserve the exact canonical display issue reviewed by citizen on Issue Summary
+  const canonicalDisplayIssue = isDissimilar
+    ? 'Invalid Issue Image'
+    : isCleanRoadRequested
+    ? 'Road Surface (Inspection Requested)'
+    : (data.displayIssueName
+      ? formatDisplayIssueName(data.displayIssueName)
+      : (data.issueType
+        ? formatDisplayIssueName(data.issueType)
+        : (isNonRoad ? getDefaultIssueTypeForDepartment(deptCode) : 'Pothole')));
+
+  const canonicalConfidence = isDissimilar
+    ? (typeof data.confidence === 'number' && data.confidence > 0 ? (data.confidence <= 1 ? Math.round(data.confidence * 100) : Math.round(data.confidence)) : 0)
+    : (typeof data.confidence === 'number'
+      ? (data.confidence > 0 && data.confidence <= 1 ? Math.round(data.confidence * 100) : Math.round(data.confidence))
+      : 0);
+
+  const canonicalConfidenceRaw = typeof data.confidenceRaw === 'number'
+    ? data.confidenceRaw
+    : (data.predictionContract?.confidenceRaw ?? (canonicalConfidence > 0 ? canonicalConfidence / 100 : 0));
+
+  const canonicalConfidenceType = data.confidenceType || data.predictionContract?.confidenceType || 'model_calibrated_probability';
+
+  const canonicalPriority = (isDissimilar || isCleanRoadRequested || isNoMajorIssue || data.priority === 'NONE')
+    ? 'NONE'
+    : ((data.priority || data.severity || 'MEDIUM').toUpperCase());
+
+  const canonicalPriorityReason = isDissimilar
+    ? 'None: Invalid or unrelated image.'
+    : (isCleanRoadRequested || isNoMajorIssue)
+    ? 'Normal clean road surface verified. No major road defects detected.'
+    : (data.priorityReason || data.predictionContract?.priorityReason || `${canonicalPriority} priority assessed for ${canonicalDisplayIssue}.`);
+
+  const canonicalPredictionState: PredictionState = isDissimilar
+    ? 'INVALID_IMAGE'
+    : (isCleanRoadRequested || isNoMajorIssue)
+    ? 'NO_MAJOR_ISSUE'
+    : (data.predictionState || data.predictionContract?.predictionState || 'VALID_ISSUE');
+
+  const canonicalPredictedClass = (isDissimilar || isCleanRoadRequested || isNoMajorIssue)
+    ? null
+    : (data.predictedClass ?? data.predictionContract?.predictedClass ?? canonicalDisplayIssue);
+
+  const canonicalModelVersion = data.modelVersion || data.predictionContract?.modelVersion || 'CivicEye-Vision-Engine-v3';
 
   const complaintDocData: Record<string, any> = {
     complaintId,
+    clientSubmissionId: data.clientSubmissionId || null,
+
+    // Typed AI Prediction Contract Fields
+    predictedClass: canonicalPredictedClass,
+    displayIssueName: canonicalDisplayIssue,
+    predictionState: canonicalPredictionState,
+    priorityReason: canonicalPriorityReason,
+    confidence: canonicalConfidence,
+    confidenceRaw: canonicalConfidenceRaw,
+    confidenceType: canonicalConfidenceType,
+    validationStatus: data.predictionContract?.validationStatus ?? (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    predictionStatus: data.predictionContract?.predictionStatus ?? (isDissimilar ? 'rejected' : 'success'),
+    predictionError: data.predictionContract?.predictionError ?? null,
+    boundingBoxes: data.predictionContract?.boundingBoxes ?? [],
+    issueCategory: activeDept,
+
+    // Feedback & Continuous Learning Candidate Provenance
+    trainingCandidateStatus: 'unverified_candidate',
+    modelVersion: canonicalModelVersion,
+    originalPrediction: canonicalPredictedClass,
+    originalScore: canonicalConfidence,
+    imageValidationOutcome: data.predictionContract?.validationStatus || (isDissimilar ? 'unrelated_image' : isNoMajorIssue ? 'valid_clean_road' : 'valid_defect'),
+    agreementStatus: data.predictionContract?.agreementStatus || 'AGREED',
+    feedbackTimestamp: serverTimestamp(),
+
     citizenId: data.citizenId,
     email: data.citizenEmail,
     citizenEmail: data.citizenEmail,
@@ -749,10 +1294,9 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     region: data.region || 'Gandhipuram',
     locationSource: data.locationSource ?? 'current',
     locationAddress: data.locationAddress ?? '',
-    issueType: defaultIssue,
-    confidence: typeof data.confidence === 'number' ? data.confidence : 0,
-    priority: isDissimilar ? 'NONE' : (data.priority || 'LOW'),
-    severity: isDissimilar ? 'LOW' : (data.severity || data.priority || 'LOW'),
+    issueType: canonicalDisplayIssue,
+    priority: canonicalPriority,
+    severity: canonicalPriority,
     department: activeDept,
     responsibleDepartment: isNonRoad ? activeDept : (data.responsibleDepartment || activeDept),
     departmentCode: deptCode,
@@ -765,12 +1309,12 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     roadValidationResult: data.roadValidationResult ?? (isDissimilar ? 'not_road' : (isNonRoad ? 'not_road' : 'road')),
     roadValidationConfidence: data.roadValidationConfidence ?? (isDissimilar ? 0 : 1.0),
     analysisStatus: data.analysisStatus ?? (isDissimilar ? 'dissimilar_image' : (isNonRoad ? 'not_road' : 'damage_detected')),
-    AI_prediction: isDissimilar ? 'Dissimilar Image to the Issue' : (data.detectedIssue || data.issueType || defaultIssue),
-    AI_confidence: data.detectionConfidence ?? data.confidence,
+    AI_prediction: canonicalDisplayIssue,
+    AI_confidence: canonicalConfidence,
     AI_validation: data.roadValidationResult || (isDissimilar ? 'not_road' : (isNonRoad ? 'not_road' : 'road')),
     AI_timestamp: serverTimestamp(),
-    ...(data.detectedIssue ? { detectedIssue: data.detectedIssue } : {}),
-    ...(typeof data.detectionConfidence === 'number' ? { detectionConfidence: data.detectionConfidence } : {}),
+    detectedIssue: canonicalDisplayIssue,
+    detectionConfidence: canonicalConfidence,
     ...(data.suggestedRoadName ? { roadName: data.suggestedRoadName } : {}),
     ...(data.suggestedAuthority ? { maintenanceAuthority: data.suggestedAuthority } : {}),
     ...(typeof data.estimatedBudget === 'number' ? { estimatedBudget: data.estimatedBudget } : {}),
@@ -779,17 +1323,17 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
     // Resolution duration calculation
     estimatedResolutionDays: (() => {
       if (isDissimilar) return 0;
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return typeof data.estimatedResolutionDays === 'number' ? data.estimatedResolutionDays : dur.durationDays;
     })(),
     estimatedResolutionDuration: (() => {
       if (isDissimilar) return 'Inactive';
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return data.estimatedResolutionDuration || dur.durationText;
     })(),
     expectedResolutionDate: (() => {
       if (isDissimilar) return null;
-      const dur = getEstimatedResolutionDuration(data.priority || 'LOW', data.issueType || defaultIssue, activeDept);
+      const dur = getEstimatedResolutionDuration(canonicalPriority, canonicalDisplayIssue, activeDept);
       return data.expectedResolutionDate || dur.expectedResolutionDate;
     })(),
     assignedOfficer: isDissimilar ? null : (data.assignedOfficerName || data.assignedOfficer || data.officerName || null),
@@ -812,17 +1356,18 @@ export async function submitComplaint(data: NewComplaintData): Promise<SubmitCom
   const ref = await addDoc(collection(db, 'complaints'), complaintDocData);
   console.log('[FIRESTORE] Complaint saved with ID:', ref.id);
 
-  // If routed to Solid Waste Management and not rejected, send email notification to citizen
-  if (!isDissimilar && (deptCode === 'SWM' || activeDept === 'Solid Waste Management')) {
-    sendSWMNotificationEmail({
+  // Send submission confirmation email to authenticated citizen account
+  if (!isDissimilar && data.citizenEmail) {
+    sendComplaintSubmissionEmail({
       complaintId,
-      issueType: data.issueType || defaultIssue,
+      issueType: canonicalDisplayIssue,
       description: data.description,
       citizenEmail: data.citizenEmail,
+      priority: canonicalPriority,
       department: activeDept,
-      routingStatus,
+      status: initialStatus,
     }).catch(err => {
-      console.warn('[complaintService] SWM Email notification dispatch error:', err);
+      console.warn('[complaintService] Submission email dispatch error:', err);
     });
   }
 
@@ -910,6 +1455,20 @@ export async function verifyComplaintWorkflow(
       }
 
       await updateDoc(docRef, updatePayload);
+
+      // Notify citizen of verified status
+      notifyCitizenStatusChange({
+        complaintId: currentData.complaintId || complaintId,
+        docId: complaintId,
+        citizenId: currentData.citizenId,
+        citizenEmail: currentData.citizenEmail,
+        issueType: verifiedIssue,
+        previousStatus: currentData.status || 'Submitted',
+        newStatus: 'Verified',
+        remarks: params.remarks || 'Existing department confirmed by field verification.',
+        department: currentDept,
+        updatedByName: params.inspectorName,
+      });
     } else if (params.action === 'transfer_department') {
       const newDeptName = params.newDepartmentName || 'Solid Waste Management';
       const newDeptCode = params.newDepartmentCode || getDepartmentCode(newDeptName);
@@ -965,19 +1524,19 @@ export async function verifyComplaintWorkflow(
 
       await updateDoc(docRef, updatePayload);
 
-      // If transferred to SWM, send email notification to citizen
-      if (newDeptCode === 'SWM' && currentData.citizenEmail) {
-        sendSWMNotificationEmail({
-          complaintId: currentData.complaintId || complaintId,
-          issueType: newIssueType,
-          description: currentData.description || '',
-          citizenEmail: currentData.citizenEmail,
-          department: newDeptName,
-          routingStatus,
-        }).catch(err => {
-          console.warn('[complaintService] SWM Email error on department transfer:', err);
-        });
-      }
+      // Notify citizen of department transfer
+      notifyCitizenStatusChange({
+        complaintId: currentData.complaintId || complaintId,
+        docId: complaintId,
+        citizenId: currentData.citizenId,
+        citizenEmail: currentData.citizenEmail,
+        issueType: newIssueType,
+        previousStatus: currentData.status || 'Submitted',
+        newStatus: 'Under Review',
+        remarks: `Transferred to ${newDeptName}. Reason: ${params.remarks || 'Another department involved.'}`,
+        department: newDeptName,
+        updatedByName: params.inspectorName,
+      });
     }
   } catch (clientErr: any) {
     console.log('[complaintService] Direct Firestore verify workflow failed, using backend proxy /api/verify-workflow...', clientErr?.message || clientErr);
@@ -1071,6 +1630,9 @@ export async function submitFieldVerification(
       fieldVerifiedAt: serverTimestamp(),
       fieldVerifiedBy: verification.inspectorName,
       fieldVerifiedById: verification.inspectorId,
+      trainingCandidateStatus: 'inspector_verified',
+      verifiedIssueCategory: verification.verifiedIssue,
+      inspectorVerifiedAt: serverTimestamp(),
       estimatedResolutionDays: durationDays,
       estimatedResolutionDuration: durationText,
       expectedResolutionDate: expectedDate,
@@ -1116,6 +1678,19 @@ export async function submitFieldVerification(
       },
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
+    });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: verification.verifiedIssue,
+      previousStatus: snap.exists() ? snap.data().status : 'Submitted',
+      newStatus: 'In Progress',
+      remarks: verification.inspectorRemarks || 'Field inspection approved; maintenance work in progress.',
+      department: verification.departmentName,
+      updatedByName: verification.inspectorName,
     });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing verification update via backend verification service...');
@@ -1183,8 +1758,23 @@ export async function rejectComplaintByInspector(
       inspectedByName: inspectorName,
       inspectedAt: serverTimestamp(),
       rejectedAt: serverTimestamp(),
+      trainingCandidateStatus: 'rejected_candidate',
+      inspectorVerifiedAt: serverTimestamp(),
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
+    });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+      previousStatus: snap.exists() ? snap.data().status : 'Pending Field Verification',
+      newStatus: 'Rejected',
+      remarks: rejectionReason,
+      department: snap.exists() ? snap.data().department : 'Road Maintenance',
+      updatedByName: inspectorName,
     });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing rejection update via backend service...');
@@ -1256,6 +1846,19 @@ export async function markComplaintAsValid(
       statusHistory: [...existingHistory, historyItem],
       updatedAt: serverTimestamp(),
     });
+
+    notifyCitizenStatusChange({
+      complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+      docId: complaintId,
+      citizenId: snap.exists() ? snap.data().citizenId : undefined,
+      citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+      issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+      previousStatus: snap.exists() ? snap.data().status : 'Pending Field Verification',
+      newStatus: 'Verified',
+      remarks: inspectorRemarks,
+      department: snap.exists() ? snap.data().department : 'Road Maintenance',
+      updatedByName: inspectorName,
+    });
   } catch (clientErr: any) {
     console.log('[complaintService] Syncing mark valid via backend service...');
     try {
@@ -1284,6 +1887,306 @@ export async function markComplaintAsValid(
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     } catch (fallbackErr) {
       console.error('[complaintService] Both direct and backend mark valid failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
+ * Field Inspector requests clarification from the citizen.
+ * Records the clarification question and moves status to 'Needs Clarification'.
+ */
+export async function requestClarificationByInspector(
+  complaintId: string,
+  inspectorId: string,
+  inspectorName: string,
+  clarificationQuestion: string,
+  inspectorRemarks?: string
+): Promise<void> {
+  if (!clarificationQuestion || !clarificationQuestion.trim()) {
+    throw new Error('A specific clarification question is required.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (isInvalidImageComplaint(currentData)) {
+    throw new Error('Action blocked: Complaint was rejected due to Invalid Issue image, raise the complaint with the appropriate image!');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: currentData.status || 'Pending Field Verification',
+    newStatus: 'Needs Clarification',
+    updatedBy: inspectorId,
+    updatedByName: inspectorName,
+    remarks: `Field Inspector requested clarification: "${clarificationQuestion.trim()}". ${inspectorRemarks?.trim() ? `Note: ${inspectorRemarks.trim()}` : ''}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Needs Clarification' as ComplaintStatus,
+      clarificationRequest: clarificationQuestion.trim(),
+      clarificationRequestedAt: serverTimestamp(),
+      clarificationRequestedBy: inspectorName,
+      clarificationRequestedById: inspectorId,
+      inspectorRemarks: inspectorRemarks?.trim() || currentData.inspectorRemarks || '',
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Notify citizen in-app
+    if (currentData.citizenId) {
+      try {
+        await createNotification({
+          userId: currentData.citizenId,
+          recipientRole: 'citizen',
+          complaintId,
+          title: 'Clarification Needed for Your Complaint',
+          message: `Field Inspector ${inspectorName} requested clarification on #${currentData.complaintId || complaintId}: "${clarificationQuestion.trim()}". Please open CivicEye to provide details.`,
+          type: 'clarification_requested',
+        });
+      } catch (notifErr) {
+        console.warn('[complaintService] Clarification notification error (handled safely):', notifErr);
+      }
+    }
+
+    // Notify citizen via email
+    if (currentData.citizenEmail) {
+      sendClarificationEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        inspectorName,
+        clarificationQuestion: clarificationQuestion.trim(),
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+      }).catch(err => {
+        console.warn('[complaintService] Clarification email dispatch warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing clarification request via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/request-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          inspectorId,
+          inspectorName,
+          clarificationQuestion: clarificationQuestion.trim(),
+          inspectorRemarks: inspectorRemarks?.trim() || '',
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend request clarification failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
+ * Citizen responds to Field Inspector's clarification request.
+ * Sets status back to 'Pending Field Verification' so inspection can resume.
+ */
+export async function respondToClarificationByCitizen(
+  complaintId: string,
+  citizenId: string,
+  responseText: string
+): Promise<void> {
+  if (!responseText || !responseText.trim()) {
+    throw new Error('Clarification response cannot be empty.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (currentData.citizenId && currentData.citizenId !== citizenId) {
+    throw new Error('Only the citizen who submitted this complaint can submit a clarification response.');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: 'Needs Clarification',
+    newStatus: 'Pending Field Verification',
+    updatedBy: citizenId,
+    updatedByName: currentData.citizenEmail?.split('@')[0] || 'Citizen',
+    remarks: `Citizen provided clarification: "${responseText.trim()}"`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Pending Field Verification' as ComplaintStatus,
+      citizenClarificationResponse: responseText.trim(),
+      citizenClarificationRespondedAt: serverTimestamp(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // Notify Field Inspector / Officer in-app
+    try {
+      await createNotification({
+        recipientRole: 'authority',
+        complaintId,
+        title: 'Citizen Clarification Submitted',
+        message: `Clarification provided by citizen for #${currentData.complaintId || complaintId}: "${responseText.trim()}"`,
+        type: 'citizen_feedback',
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Citizen response notification error (handled safely):', notifErr);
+    }
+
+    // Notify citizen via email
+    if (currentData.citizenEmail) {
+      sendStatusUpdateEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        previousStatus: 'Needs Clarification',
+        newStatus: 'Pending Field Verification',
+        statusRemarks: `Your clarification response was received: "${responseText.trim()}". Field Inspector will re-evaluate on-site.`,
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+        updatedByName: 'CivicEye System',
+      }).catch(err => {
+        console.warn('[complaintService] Clarification response acknowledgement email warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing citizen clarification response via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/respond-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          citizenId,
+          responseText: responseText.trim(),
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend respond clarification failed:', fallbackErr);
+      throw clientErr;
+    }
+  }
+}
+
+/**
+ * Field Inspector officially closes a complaint that requires no serious repair,
+ * has minor defect handled, or is resolved on inspection without repair assignment.
+ */
+export async function closeComplaintByInspector(
+  complaintId: string,
+  inspectorId: string,
+  inspectorName: string,
+  closureReason: string,
+  closureOutcome: string = 'No Major Repair Required',
+  inspectorRemarks?: string
+): Promise<void> {
+  if (!closureReason || !closureReason.trim()) {
+    throw new Error('A clear closure reason is required to close a complaint.');
+  }
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const currentData = snap.data();
+  if (currentData.status === 'Closed') {
+    throw new Error('Complaint is already closed.');
+  }
+  if (isInvalidImageComplaint(currentData)) {
+    throw new Error('Action blocked: Complaint was rejected due to Invalid Issue image, raise the complaint with the appropriate image!');
+  }
+  const existingHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: currentData.status || 'Pending Field Verification',
+    newStatus: 'Closed',
+    updatedBy: inspectorId,
+    updatedByName: inspectorName,
+    remarks: `Closed by Field Inspector: [${closureOutcome}] ${closureReason.trim()}.${inspectorRemarks?.trim() ? ` Observations: ${inspectorRemarks.trim()}` : ''}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await updateDoc(docRef, {
+      status: 'Closed' as ComplaintStatus,
+      inspectionStatus: 'VALID' as InspectionStatus,
+      inspectionResult: 'genuine',
+      closureReason: closureReason.trim(),
+      closureOutcome,
+      closedAt: serverTimestamp(),
+      closedBy: inspectorName,
+      closedById: inspectorId,
+      closedByRole: 'field_inspector',
+      inspectedAt: serverTimestamp(),
+      inspectedBy: inspectorId,
+      inspectedByName: inspectorName,
+      inspectorRemarks: inspectorRemarks?.trim() || closureReason.trim(),
+      statusHistory: [...existingHistory, historyItem],
+      updatedAt: serverTimestamp(),
+    });
+
+    // In-app notification to citizen
+    if (currentData.citizenId) {
+      try {
+        await createNotification({
+          userId: currentData.citizenId,
+          recipientRole: 'citizen',
+          complaintId,
+          title: `Complaint Closed: ${closureOutcome}`,
+          message: `Your complaint #${currentData.complaintId || complaintId} was inspected by Field Inspector ${inspectorName} and closed: "${closureReason.trim()}".`,
+          type: 'work_resolved',
+        });
+      } catch (notifErr) {
+        console.warn('[complaintService] Closure notification error (handled safely):', notifErr);
+      }
+    }
+
+    // Email notification to citizen
+    if (currentData.citizenEmail) {
+      sendClosureEmail({
+        complaintId: currentData.complaintId || complaintId,
+        issueType: currentData.issueType || 'Civic Infrastructure Defect',
+        citizenEmail: currentData.citizenEmail,
+        inspectorName,
+        closureReason: closureReason.trim(),
+        closureOutcome,
+        inspectorRemarks: inspectorRemarks?.trim() || '',
+        department: currentData.department || currentData.responsibleDepartment || 'Road Maintenance',
+      }).catch(err => {
+        console.warn('[complaintService] Closure email dispatch warning:', err);
+      });
+    }
+  } catch (clientErr: any) {
+    console.log('[complaintService] Syncing inspector closure via backend service...');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/close-complaint-inspector`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintId,
+          inspectorId,
+          inspectorName,
+          closureReason: closureReason.trim(),
+          closureOutcome,
+          inspectorRemarks: inspectorRemarks?.trim() || '',
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (fallbackErr) {
+      console.error('[complaintService] Both direct and backend closure failed:', fallbackErr);
       throw clientErr;
     }
   }
@@ -1331,6 +2234,19 @@ export async function assignToAuthority(
     officerRemarks: assignment.adminRemarks || '',
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
+  });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'Verified',
+    newStatus: 'Assigned',
+    remarks: assignment.adminRemarks || `Assigned to ${assignment.assignedAuthority}`,
+    department: assignment.assignedAuthority,
+    updatedByName: assignment.adminName,
   });
 }
 
@@ -1421,6 +2337,19 @@ export async function updateAuthorityProgress(
   }
 
   await updateDoc(docRef, updatePayload);
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'Assigned',
+    newStatus,
+    remarks: progressRemarks,
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: officerName,
+  });
 }
 
 /**
@@ -1510,6 +2439,19 @@ export async function markComplaintResolved(
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
   });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId: snap.exists() ? snap.data().citizenId : undefined,
+    citizenEmail: snap.exists() ? snap.data().citizenEmail : undefined,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: snap.exists() ? snap.data().status : 'In Progress',
+    newStatus: 'Resolved',
+    remarks: resolution.resolutionRemarks,
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: resolution.resolvedByName,
+  });
 }
 
 export async function markAsResolved(
@@ -1567,6 +2509,19 @@ export async function submitCitizenVerification(
     statusHistory: [...existingHistory, historyItem],
     updatedAt: serverTimestamp(),
   });
+
+  notifyCitizenStatusChange({
+    complaintId: snap.exists() ? snap.data().complaintId : complaintId,
+    docId: complaintId,
+    citizenId,
+    citizenEmail,
+    issueType: snap.exists() ? snap.data().issueType : 'Civic Issue',
+    previousStatus: 'Resolved',
+    newStatus: targetStatus,
+    remarks: feedbackRemarks || (confirmedResolved ? 'Citizen verified and closed' : 'Citizen reported not resolved'),
+    department: snap.exists() ? snap.data().department : 'Road Maintenance',
+    updatedByName: citizenEmail.split('@')[0] || 'Citizen',
+  });
 }
 
 export function subscribeToUserComplaints(
@@ -1584,6 +2539,7 @@ export function subscribeToUserComplaints(
     snapshot => {
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
+        .filter(c => !isInvalidImageComplaint(c) && !c.isDeleted)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       onData(complaints);
     },
@@ -1604,8 +2560,8 @@ export function subscribeToAssignedComplaints(
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
         .filter(c => {
-          // Exclude rejected image mismatch complaints from active inspector queues
-          if (isInvalidImageComplaint(c)) {
+          // Exclude deleted or rejected image mismatch complaints from active inspector queues
+          if (c.isDeleted || isInvalidImageComplaint(c)) {
             return false;
           }
 
@@ -1618,7 +2574,7 @@ export function subscribeToAssignedComplaints(
           // Inspected by this inspector
           if (c.inspectedBy === inspectorId || c.inspectionDetails?.inspectedBy === inspectorId) return true;
           // Unassigned and pending field inspection / verification
-          if (!c.assignedInspectorId && (c.status === 'Pending Field Verification' || c.status === 'Submitted' || c.status === 'Verified')) return true;
+          if (!c.assignedInspectorId && (c.status === 'Pending Field Verification' || c.status === 'Submitted' || c.status === 'Verified' || c.status === 'Needs Clarification')) return true;
 
           return false;
         })
@@ -1640,6 +2596,7 @@ export function subscribeToAllComplaints(
     snapshot => {
       const complaints: Complaint[] = snapshot.docs
         .map(d => parseComplaintDoc(d))
+        .filter(c => !c.isDeleted)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       onData(complaints);
     },
@@ -1659,7 +2616,12 @@ export function subscribeToComplaint(
         onData(null);
         return;
       }
-      onData(parseComplaintDoc(snap));
+      const parsed = parseComplaintDoc(snap);
+      if (parsed.isDeleted) {
+        onData(null);
+        return;
+      }
+      onData(parsed);
     },
     err => onError(err as Error)
   );
@@ -1672,9 +2634,11 @@ export async function getUserComplaintStats(citizenId: string) {
   let resolved = 0;
   let rejected = 0;
   snapshot.forEach(d => {
-    const status = d.data().status as ComplaintStatus;
+    const data = d.data();
+    if (data.isDeleted) return;
+    const status = data.status as ComplaintStatus;
     if (status === 'Closed' || status === 'Resolved') resolved++;
-    else if (isInvalidImageComplaint(d.data())) rejected++;
+    else if (isInvalidImageComplaint(data)) rejected++;
     else active++;
   });
   return { total: snapshot.size, active, resolved, rejected };
@@ -1692,6 +2656,7 @@ export async function getOfficerStats() {
 
   complaintsSnapshot.forEach(d => {
     const data = d.data();
+    if (data.isDeleted) return;
     const status = data.status as ComplaintStatus;
     const inspStatus = data.inspectionStatus as InspectionStatus;
     total++;
@@ -1711,6 +2676,209 @@ export async function getOfficerStats() {
   });
 
   return { total, newComplaints, pendingInspection, validComplaints, rejectedComplaints, inProgress, resolved };
+}
+
+/**
+ * Citizen-side complaint deletion (owner-enforced)
+ */
+export async function deleteComplaintByCitizen(
+  complaintId: string,
+  citizenId: string
+): Promise<void> {
+  // First attempt backend proxy for authenticated backend proxy flow
+  try {
+    const apiBase = getApiBaseUrl();
+    const res = await fetch(`${apiBase}/api/citizen-delete-complaint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ complaintId, citizenId }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      console.log('✅ [complaintService] Citizen deletion via server proxy successful:', json);
+      return;
+    }
+  } catch (proxyErr) {
+    console.warn('[complaintService] Backend proxy citizen deletion unavailable, falling back to direct Firestore:', proxyErr);
+  }
+
+  // Fallback direct Firestore update
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const data = snap.data();
+  if (data.citizenId !== citizenId) {
+    throw new Error('Unauthorized: You can only delete complaints that you submitted.');
+  }
+
+  const existingHistory = Array.isArray(data.statusHistory) ? data.statusHistory : [];
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: data.status || 'Submitted',
+    newStatus: 'Deleted by Citizen',
+    updatedBy: citizenId,
+    updatedByName: data.citizenEmail?.split('@')[0] || 'Citizen',
+    remarks: 'Complaint deleted by citizen from active views.',
+    timestamp: new Date().toISOString(),
+  };
+
+  await updateDoc(docRef, {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: citizenId,
+    deletedByRole: 'citizen',
+    status: 'Closed',
+    statusHistory: [...existingHistory, historyItem],
+    updatedAt: serverTimestamp(),
+  });
+
+  // Atomically create citizen notification for self-deletion
+  const citizenUid = data.citizenId;
+  const canonicalIssue = data.displayIssueName || data.issueType || 'Civic Defect';
+  const displayId = data.complaintId || complaintId;
+  const notifDateStr = new Date().toLocaleString('en-IN');
+  if (citizenUid) {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        userId: citizenUid,
+        recipientId: citizenUid,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Deleted',
+        message: `Your complaint ${displayId} (${canonicalIssue}) was deleted on ${notifDateStr} and removed from active records.`,
+        type: 'complaint_deleted',
+        deletionReason: 'Deleted by citizen from active records',
+        deletedBy: 'You (Citizen)',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Citizen deletion in-app notif note:', notifErr);
+    }
+  }
+
+  // Deletion email notification
+  if (data.citizenEmail) {
+    sendComplaintDeletionEmail({
+      complaintId: displayId,
+      issueType: canonicalIssue,
+      citizenEmail: data.citizenEmail,
+      initiatedBy: 'citizen',
+      deletionReason: 'Deleted by citizen request',
+    }).catch(err => console.warn('[complaintService] Citizen deletion email error (safely handled):', err));
+  }
+}
+
+/**
+ * Authority/Officer-side complaint deletion (reason-enforced + citizen notification)
+ */
+export async function deleteComplaintByAuthority(
+  complaintId: string,
+  officerId: string,
+  officerName: string,
+  officerRole: string,
+  deletionReason: string
+): Promise<void> {
+  const reason = (deletionReason || '').trim();
+  if (!reason) {
+    throw new Error('A non-empty deletion reason or clarification is strictly required to delete this complaint.');
+  }
+
+  // First attempt backend proxy for atomic server execution
+  try {
+    const apiBase = getApiBaseUrl();
+    const res = await fetch(`${apiBase}/api/authority-delete-complaint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        complaintId,
+        officerId,
+        officerName,
+        officerRole,
+        deletionReason: reason,
+      }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      console.log('✅ [complaintService] Authority deletion via server proxy successful:', json);
+      return;
+    }
+  } catch (proxyErr) {
+    console.warn('[complaintService] Backend proxy authority deletion unavailable, falling back to direct Firestore:', proxyErr);
+  }
+
+  // Fallback direct Firestore update
+  const docRef = doc(db, 'complaints', complaintId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) {
+    throw new Error('Complaint not found.');
+  }
+  const data = snap.data();
+
+  const existingHistory = Array.isArray(data.statusHistory) ? data.statusHistory : [];
+  const historyItem = {
+    id: `hist-${Date.now()}`,
+    previousStatus: data.status || 'Submitted',
+    newStatus: 'Deleted by Authority',
+    updatedBy: officerId,
+    updatedByName: officerName || 'Authorized Officer',
+    remarks: `Complaint removed by authority. Reason: ${reason}`,
+    timestamp: new Date().toISOString(),
+  };
+
+  await updateDoc(docRef, {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: officerId,
+    deletedByRole: 'officer',
+    deletionReason: reason,
+    status: 'Closed',
+    statusHistory: [...existingHistory, historyItem],
+    updatedAt: serverTimestamp(),
+  });
+
+  // Atomically create citizen notification
+  const citizenUid = data.citizenId;
+  const canonicalIssue = data.displayIssueName || data.issueType || 'Civic Defect';
+  const displayId = data.complaintId || complaintId;
+  const notifDateStr = new Date().toLocaleString('en-IN');
+  const notifMessage = `Your complaint ${displayId} — ${canonicalIssue} — was removed by the responsible authority. Reason: ${reason}. Date: ${notifDateStr}.`;
+
+  if (citizenUid) {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        userId: citizenUid,
+        recipientId: citizenUid,
+        recipientRole: 'citizen',
+        complaintId: displayId,
+        complaintDocId: complaintId,
+        title: 'Complaint Removed by Authority',
+        message: notifMessage,
+        type: 'complaint_deleted',
+        deletionReason: reason,
+        deletedBy: officerName || 'Authorized Officer',
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('[complaintService] Failed to create in-app notification directly:', notifErr);
+    }
+  }
+
+  // Deletion email notification
+  if (data.citizenEmail) {
+    sendComplaintDeletionEmail({
+      complaintId: displayId,
+      issueType: canonicalIssue,
+      citizenEmail: data.citizenEmail,
+      initiatedBy: 'authority',
+      deletionReason: reason,
+      deletedByName: officerName || 'Authorized Officer',
+    }).catch(err => console.warn('[complaintService] Authority deletion email error (safely handled):', err));
+  }
 }
 
 export async function updateComplaintStatus(docId: string, status: ComplaintStatus) {

@@ -78,8 +78,11 @@ Opens app in default web browser at http://localhost:8081
 
 1. **First Launch**: App will navigate to Login screen
 2. **Login Credentials**: Use your test Firebase account
-   - Firebase project: `civiceye-21b88`
-   - Endpoint: `https://civiceye-21b88.firebaseapp.com`
+   - Firebase project: `civiceye-c127c`
+   - Endpoint: `https://civiceye-c127c.firebaseapp.com`
+   - Seeded Citizen: `citizen1@civiceye.demo` / `Password@123`
+   - Seeded Field Inspector: `inspector@civiceye.gov` / `Inspector@123`
+   - Seeded Main Officer: `main@civiceye.gov` / `Officer@123`
 3. **Signup**: New users can create account via signup screen
 4. **Post-Auth**: App navigates to Home screen (tabs)
 

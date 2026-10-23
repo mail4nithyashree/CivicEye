@@ -1,0 +1,44 @@
+{
+  "classes": [
+    "alligator_cracking",
+    "cracking",
+    "damaged_footpath",
+    "damaged_traffic_sign",
+    "debris_road_blockage",
+    "manhole_defect",
+    "pothole",
+    "road_divider_damage",
+    "street_light_fault",
+    "unrelated_images",
+    "valid_road_no_issue",
+    "waterlogging"
+  ],
+  "class_to_idx": {
+    "alligator_cracking": 0,
+    "cracking": 1,
+    "damaged_footpath": 2,
+    "damaged_traffic_sign": 3,
+    "debris_road_blockage": 4,
+    "manhole_defect": 5,
+    "pothole": 6,
+    "road_divider_damage": 7,
+    "street_light_fault": 8,
+    "unrelated_images": 9,
+    "valid_road_no_issue": 10,
+    "waterlogging": 11
+  },
+  "input_size": [
+    224,
+    224
+  ],
+  "mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "std": [
+    0.229,
+    0.224,
+    0.225
+  ]
+}

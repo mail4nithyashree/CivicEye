@@ -1,7 +1,8 @@
 import AuthInput from '@/components/AuthInput';
+import ThemeToggle from '@/components/ThemeToggle';
 import { AppColors } from '@/constants/colors';
 import { auth, db } from '@/firebaseConfig';
-import { VISIBLE_ISSUES_METADATA } from '@/services/detectionConfig';
+import { useAppTheme } from '@/context/ThemeContext';
 import { seedSyntheticCivicData } from '@/services/demoDataService';
 import { Ionicons } from '@expo/vector-icons';
 import { useRootNavigationState, useRouter } from 'expo-router';
@@ -57,8 +58,7 @@ export default function CitizenProfileScreen() {
   const [updatingPassword, setUpdatingPassword] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
 
-  // AI Detectable Issues Modal
-  const [showIssuesModal, setShowIssuesModal] = useState(false);
+  const { colors, isDark } = useAppTheme();
 
   // Synthetic Data Seeding State
   const [seedingData, setSeedingData] = useState(false);
@@ -296,7 +296,7 @@ export default function CitizenProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -308,48 +308,51 @@ export default function CitizenProfileScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Citizen Profile</Text>
-            <TouchableOpacity
-              style={styles.signOutHeaderBtn}
-              onPress={handleSignOut}
-              accessibilityRole="button"
-              accessibilityLabel="Log Out"
-            >
-              <Ionicons name="log-out-outline" size={20} color={AppColors.error} />
-              <Text style={styles.signOutHeaderText}>Log Out</Text>
-            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>Citizen Profile</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <ThemeToggle />
+              <TouchableOpacity
+                style={styles.signOutHeaderBtn}
+                onPress={handleSignOut}
+                accessibilityRole="button"
+                accessibilityLabel="Log Out"
+              >
+                <Ionicons name="log-out-outline" size={20} color={AppColors.error} />
+                <Text style={styles.signOutHeaderText}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Profile Card / Avatar */}
-          <View style={styles.profileCard}>
-            <View style={styles.avatarWrap}>
-              <Text style={styles.avatarText}>{getInitials(fullName)}</Text>
+          <View style={[styles.profileCard, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
+            <View style={[styles.avatarWrap, isDark && { backgroundColor: colors.surfaceElevated }]}>
+              <Text style={[styles.avatarText, isDark && { color: colors.textPrimary }]}>{getInitials(fullName)}</Text>
             </View>
             <View style={styles.profileMeta}>
-              <Text style={styles.profileName}>{fullName || 'Citizen User'}</Text>
-              <Text style={styles.profileEmail}>{user?.email || 'citizen@example.com'}</Text>
+              <Text style={[styles.profileName, isDark && { color: colors.textPrimary }]}>{fullName || 'Citizen User'}</Text>
+              <Text style={[styles.profileEmail, isDark && { color: colors.textSecondary }]}>{user?.email || 'citizen@example.com'}</Text>
               <View style={styles.badgeRow}>
-                <View style={styles.roleBadge}>
-                  <Ionicons name="shield-checkmark" size={12} color={AppColors.primary} />
-                  <Text style={styles.roleBadgeText}>Verified Citizen</Text>
+                <View style={[styles.roleBadge, isDark && { backgroundColor: colors.surfaceElevated }]}>
+                  <Ionicons name="shield-checkmark" size={12} color={isDark ? colors.buttonPrimary : AppColors.primary} />
+                  <Text style={[styles.roleBadgeText, isDark && { color: colors.textPrimary }]}>Verified Citizen</Text>
                 </View>
-                <View style={styles.regionBadge}>
-                  <Ionicons name="location" size={12} color="#0D9488" />
-                  <Text style={styles.regionBadgeText}>{preferredRegion}</Text>
+                <View style={[styles.regionBadge, isDark && { backgroundColor: colors.surfaceElevated }]}>
+                  <Ionicons name="location" size={12} color={isDark ? colors.buttonPrimary : '#0D9488'} />
+                  <Text style={[styles.regionBadgeText, isDark && { color: colors.textPrimary }]}>{preferredRegion}</Text>
                 </View>
               </View>
             </View>
           </View>
 
           {/* Edit Profile Form */}
-          <View style={styles.sectionCard}>
+          <View style={[styles.sectionCard, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
             <View style={styles.sectionHeader}>
-              <Ionicons name="person-outline" size={20} color={AppColors.primary} />
-              <Text style={styles.sectionTitle}>Personal Information</Text>
+              <Ionicons name="person-outline" size={20} color={isDark ? colors.buttonPrimary : AppColors.primary} />
+              <Text style={[styles.sectionTitle, isDark && { color: colors.textPrimary }]}>Personal Information</Text>
             </View>
 
             {loadingProfile ? (
-              <ActivityIndicator size="small" color={AppColors.primary} style={{ marginVertical: 20 }} />
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
             ) : (
               <View style={styles.formContent}>
                 <AuthInput
@@ -358,6 +361,7 @@ export default function CitizenProfileScreen() {
                   value={fullName}
                   onChangeText={setFullName}
                   accessibilityHint="Edit your full name"
+                  labelStyle={isDark ? { color: colors.textPrimary } : undefined}
                 />
 
                 <AuthInput
@@ -367,17 +371,19 @@ export default function CitizenProfileScreen() {
                   onChangeText={setPhone}
                   keyboardType="phone-pad"
                   accessibilityHint="Edit your contact phone number"
+                  labelStyle={isDark ? { color: colors.textPrimary } : undefined}
                 />
 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Primary Coimbatore Zone / Locality</Text>
+                  <Text style={[styles.inputLabel, isDark && { color: colors.textPrimary }]}>Primary Coimbatore Zone / Locality</Text>
                   <View style={styles.regionSelectorRow}>
                     {(['Gandhipuram', 'Peelamedu', 'Ganapathy', 'Maniyakarampalayam'] as const).map(reg => (
                       <TouchableOpacity
                         key={reg}
                         style={[
                           styles.regionChip,
-                          preferredRegion === reg && styles.regionChipActive,
+                          isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight },
+                          preferredRegion === reg && (isDark ? { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary } : styles.regionChipActive),
                         ]}
                         onPress={() => setPreferredRegion(reg)}
                         accessibilityRole="button"
@@ -385,7 +391,8 @@ export default function CitizenProfileScreen() {
                         <Text
                           style={[
                             styles.regionChipText,
-                            preferredRegion === reg && styles.regionChipTextActive,
+                            isDark && { color: colors.textPrimary },
+                            preferredRegion === reg && [styles.regionChipTextActive, isDark && { color: colors.white }],
                           ]}
                         >
                           {reg}
@@ -396,7 +403,7 @@ export default function CitizenProfileScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.primaryActionBtn, savingProfile && styles.btnDisabled]}
+                  style={[styles.primaryActionBtn, isDark && { backgroundColor: colors.buttonPrimary }, savingProfile && styles.btnDisabled]}
                   onPress={handleSaveProfile}
                   disabled={savingProfile}
                   accessibilityRole="button"
@@ -407,7 +414,7 @@ export default function CitizenProfileScreen() {
                   ) : (
                     <View style={styles.btnRow}>
                       <Ionicons name="save-outline" size={18} color={AppColors.white} />
-                      <Text style={styles.primaryActionBtnText}>Save Profile Details</Text>
+                      <Text style={[styles.primaryActionBtnText, isDark && { color: colors.buttonText }]}>Save Profile Details</Text>
                     </View>
                   )}
                 </TouchableOpacity>
@@ -415,65 +422,21 @@ export default function CitizenProfileScreen() {
             )}
           </View>
 
-          {/* AI Model & Visible Road Issues Hub */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="hardware-chip-outline" size={20} color="#7C3AED" />
-              <Text style={styles.sectionTitle}>AI Road Defect Model</Text>
-            </View>
-            <Text style={styles.sectionDescription}>
-              CivicEye uses edge AI models to automatically inspect road photographs, identify safety hazards, and dispatch complaints to Coimbatore municipal authorities.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.capabilityBtn}
-              onPress={() => setShowIssuesModal(true)}
-              accessibilityRole="button"
-              accessibilityLabel="View All AI Detectable Issues"
-            >
-              <View style={styles.capabilityLeft}>
-                <Ionicons name="list-circle-outline" size={24} color="#7C3AED" />
-                <View>
-                  <Text style={styles.capabilityTitle}>View All Detectable Road Issues</Text>
-                  <Text style={styles.capabilitySub}>Dividers, Streetlights, Manholes, Waterlogging & more</Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={AppColors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.seedDataBtn, seedingData && styles.btnDisabled]}
-              onPress={handleSeedDemoData}
-              disabled={seedingData}
-              accessibilityRole="button"
-              accessibilityLabel="Seed Synthetic Road Data"
-            >
-              {seedingData ? (
-                <ActivityIndicator size="small" color="#0D9488" />
-              ) : (
-                <View style={styles.btnRow}>
-                  <Ionicons name="cloud-upload-outline" size={18} color="#0D9488" />
-                  <Text style={styles.seedDataBtnText}>Seed Synthetic Road Issues to Hub</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
-
           {/* Security & Password Management */}
-          <View style={styles.sectionCard}>
+          <View style={[styles.sectionCard, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
             <TouchableOpacity
               style={styles.sectionHeaderToggle}
               onPress={() => setShowPasswordSection(!showPasswordSection)}
               accessibilityRole="button"
             >
               <View style={styles.sectionHeader}>
-                <Ionicons name="key-outline" size={20} color={AppColors.primary} />
-                <Text style={styles.sectionTitle}>Security & Password</Text>
+                <Ionicons name="key-outline" size={20} color={isDark ? colors.buttonPrimary : AppColors.primary} />
+                <Text style={[styles.sectionTitle, isDark && { color: colors.textPrimary }]}>Security & Password</Text>
               </View>
               <Ionicons
                 name={showPasswordSection ? 'chevron-up' : 'chevron-down'}
                 size={20}
-                color={AppColors.textSecondary}
+                color={isDark ? colors.textSecondary : AppColors.textSecondary}
               />
             </TouchableOpacity>
 
@@ -486,6 +449,7 @@ export default function CitizenProfileScreen() {
                   onChangeText={setCurrentPassword}
                   isPassword
                   accessibilityHint="Enter your current account password"
+                  labelStyle={isDark ? { color: colors.textPrimary } : undefined}
                 />
 
                 <AuthInput
@@ -495,6 +459,7 @@ export default function CitizenProfileScreen() {
                   onChangeText={setNewPassword}
                   isPassword
                   accessibilityHint="Enter a new strong password"
+                  labelStyle={isDark ? { color: colors.textPrimary } : undefined}
                 />
 
                 <AuthInput
@@ -504,10 +469,11 @@ export default function CitizenProfileScreen() {
                   onChangeText={setConfirmPassword}
                   isPassword
                   accessibilityHint="Confirm your new password"
+                  labelStyle={isDark ? { color: colors.textPrimary } : undefined}
                 />
 
                 <TouchableOpacity
-                  style={[styles.primaryActionBtn, updatingPassword && styles.btnDisabled]}
+                  style={[styles.primaryActionBtn, isDark && { backgroundColor: colors.buttonPrimary }, updatingPassword && styles.btnDisabled]}
                   onPress={handleChangePassword}
                   disabled={updatingPassword}
                   accessibilityRole="button"
@@ -515,7 +481,7 @@ export default function CitizenProfileScreen() {
                   {updatingPassword ? (
                     <ActivityIndicator size="small" color={AppColors.white} />
                   ) : (
-                    <Text style={styles.primaryActionBtnText}>Update Password</Text>
+                    <Text style={[styles.primaryActionBtnText, isDark && { color: colors.buttonText }]}>Update Password</Text>
                   )}
                 </TouchableOpacity>
 
@@ -525,9 +491,9 @@ export default function CitizenProfileScreen() {
                   disabled={sendingReset}
                 >
                   {sendingReset ? (
-                    <ActivityIndicator size="small" color={AppColors.primary} />
+                    <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
-                    <Text style={styles.resetEmailText}>Forgot password? Send Reset Email Link</Text>
+                    <Text style={[styles.resetEmailText, isDark && { color: colors.buttonPrimary }]}>Forgot password? Send Reset Email Link</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -535,16 +501,16 @@ export default function CitizenProfileScreen() {
           </View>
 
           {/* Account Logout Card */}
-          <View style={styles.sectionCard}>
+          <View style={[styles.sectionCard, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="log-out-outline" size={20} color={AppColors.error} />
-              <Text style={styles.sectionTitle}>Account Session</Text>
+              <Text style={[styles.sectionTitle, isDark && { color: colors.textPrimary }]}>Account Session</Text>
             </View>
-            <Text style={styles.sessionDesc}>
+            <Text style={[styles.sessionDesc, isDark && { color: colors.textSecondary }]}>
               Logged in as <Text style={{ fontWeight: '700' }}>{user?.email || 'Citizen'}</Text>. Sign out of your session on this device.
             </Text>
             <TouchableOpacity
-              style={styles.profileLogoutBtn}
+              style={[styles.profileLogoutBtn, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}
               onPress={handleSignOut}
               accessibilityRole="button"
               accessibilityLabel="Log Out of CivicEye"
@@ -555,12 +521,12 @@ export default function CitizenProfileScreen() {
           </View>
 
           {/* Danger Zone / Delete Account */}
-          <View style={[styles.sectionCard, styles.dangerCard]}>
+          <View style={[styles.sectionCard, styles.dangerCard, isDark && { backgroundColor: colors.card, borderColor: '#FCA5A5' }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="warning-outline" size={20} color={AppColors.error} />
               <Text style={[styles.sectionTitle, { color: AppColors.error }]}>Danger Zone</Text>
             </View>
-            <Text style={styles.dangerText}>
+            <Text style={[styles.dangerText, isDark && { color: colors.textSecondary }]}>
               Permanently delete your citizen profile, contact details, and account credentials from the CivicEye registry.
             </Text>
 
@@ -576,86 +542,6 @@ export default function CitizenProfileScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* AI Detectable Issues Modal */}
-      <Modal
-        visible={showIssuesModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowIssuesModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Detectable Road Defects</Text>
-                <Text style={styles.modalSub}>AI Recognition & Authority Routing</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setShowIssuesModal(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Close"
-              >
-                <Ionicons name="close-circle" size={28} color={AppColors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
-              {VISIBLE_ISSUES_METADATA.map(item => (
-                <View key={item.id} style={styles.issueCard}>
-                  <View style={styles.issueHeader}>
-                    <Text style={styles.issueTitle}>{item.title}</Text>
-                    <View
-                      style={[
-                        styles.priorityPill,
-                        item.defaultPriority === 'HIGH' && { backgroundColor: '#FEE2E2' },
-                        item.defaultPriority === 'MEDIUM' && { backgroundColor: '#FEF3C7' },
-                        item.defaultPriority === 'LOW' && { backgroundColor: '#E0F2FE' },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.priorityPillText,
-                          item.defaultPriority === 'HIGH' && { color: AppColors.error },
-                          item.defaultPriority === 'MEDIUM' && { color: '#B45309' },
-                          item.defaultPriority === 'LOW' && { color: '#0369A1' },
-                        ]}
-                      >
-                        {item.defaultPriority} PRIORITY
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.issueCategory}>{item.category}</Text>
-                  <Text style={styles.issueDesc}>{item.description}</Text>
-
-                  <View style={styles.deptBox}>
-                    <Ionicons name="business" size={14} color={AppColors.primary} />
-                    <Text style={styles.deptBoxText}>
-                      Routed to: <Text style={{ fontWeight: '700' }}>{item.department}</Text> ({item.departmentCode})
-                    </Text>
-                  </View>
-
-                  <View style={styles.featureWrap}>
-                    {item.detectionFeatures.map((f, i) => (
-                      <View key={i} style={styles.featureTag}>
-                        <Text style={styles.featureTagText}>• {f}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-
-            <TouchableOpacity
-              style={styles.modalCloseBtn}
-              onPress={() => setShowIssuesModal(false)}
-            >
-              <Text style={styles.modalCloseBtnText}>Close Catalog</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Delete Account Modal */}
       <Modal

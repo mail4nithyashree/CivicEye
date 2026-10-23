@@ -1,6 +1,8 @@
-import { AppColors } from '@/constants/colors';
+import React from 'react';
+import { useAppTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface Props {
   icon: keyof typeof Ionicons.glyphMap;
@@ -10,18 +12,40 @@ interface Props {
   accessibilityHint?: string;
 }
 
-export default function QuickActionCard({ icon, label, color = AppColors.primary, onPress, accessibilityHint }: Props) {
+export default function QuickActionCard({ icon, label, color, onPress, accessibilityHint }: Props) {
+  const { colors, isDark } = useAppTheme();
+  const iconColor = color || (isDark ? '#0F4C81' : colors.primary);
+
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.surface,
+          borderColor: isDark ? '#334155' : '#E2E8F0',
+          borderWidth: 1,
+          overflow: 'hidden',
+        },
+      ]}
       onPress={onPress}
       accessible
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
     >
-      <Ionicons name={icon} size={26} color={color} />
-      <Text style={styles.label} numberOfLines={2}>{label}</Text>
+      {isDark && (
+        <LinearGradient
+          colors={['#B0E0E6', '#FFFFFF']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
+      <Ionicons name={icon} size={26} color={iconColor} />
+      <Text style={[styles.label, { color: isDark ? '#17202A' : colors.textPrimary }]} numberOfLines={2}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -29,7 +53,6 @@ export default function QuickActionCard({ icon, label, color = AppColors.primary
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: AppColors.surface,
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 6,
@@ -52,8 +75,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 11,
-    fontWeight: '600',
-    color: AppColors.textPrimary,
+    fontWeight: '700',
     textAlign: 'center',
     lineHeight: 14,
   },

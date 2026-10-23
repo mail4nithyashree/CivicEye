@@ -18,11 +18,15 @@ import {
   submitFieldVerification,
   subscribeToComplaint,
   uploadComplaintImage,
+  requestClarificationByInspector,
+  closeComplaintByInspector,
   type Complaint,
 } from '@/services/complaintService';
 import { type DetectedIssueType } from '@/services/detectionConfig';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 import { createNotification } from '@/services/notificationService';
 import { subscribeToOfficerProfile, type Officer } from '@/services/officerService';
+import { useAppTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRootNavigationState, useRouter } from 'expo-router';
@@ -53,6 +57,14 @@ const REJECTION_PRESETS = [
   'Temporary utility/construction work in progress with permit',
   'Uploaded image is fake, unrelated, or does not match location',
   'Other (Specify custom reason)',
+];
+
+const CLOSURE_OUTCOMES = [
+  'No Major Repair Required',
+  'Minor Issue Resolved on Site',
+  'Routine Pavement Wear (Monitored)',
+  'Addressed in Ongoing Project',
+  'Duplicate / Administrative Closure',
 ];
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -98,6 +110,7 @@ const SEVERITY_OPTIONS: ('LOW' | 'MEDIUM' | 'HIGH')[] = ['LOW', 'MEDIUM', 'HIGH'
 
 export default function InspectionScreen() {
   const router = useRouter();
+  const { colors, isDark } = useAppTheme();
   const rootNavigationState = useRootNavigationState();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [user, setUser] = useState<User | null>(auth.currentUser);
@@ -107,8 +120,16 @@ export default function InspectionScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [submittingStatusText, setSubmittingStatusText] = useState('');
 
-  // Decision State: genuine vs fake
-  const [decision, setDecision] = useState<'genuine' | 'fake'>('genuine');
+  // Decision State: genuine vs clarification vs no_repair vs fake
+  type InspectionDecision = 'genuine' | 'clarification' | 'no_repair' | 'fake';
+  const [decision, setDecision] = useState<InspectionDecision>('genuine');
+
+  // Clarification states
+  const [clarificationQuestion, setClarificationQuestion] = useState('');
+
+  // No repair / Closure states
+  const [closureOutcome, setClosureOutcome] = useState('No Major Repair Required');
+  const [closureReason, setClosureReason] = useState('');
 
   // Field Verification Form States
   const [verifiedIssue, setVerifiedIssue] = useState<DetectedIssueType>('pothole');
@@ -541,21 +562,79 @@ export default function InspectionScreen() {
     }
   };
 
+  // Clarification Request Handler
+  const handleRequestClarification = async () => {
+    if (!complaint || !user || !officer) return;
+    if (!clarificationQuestion.trim()) {
+      Alert.alert('Required', 'Please enter a clear clarification question for the citizen.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmittingStatusText('Dispatching clarification request...');
+    try {
+      await requestClarificationByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        clarificationQuestion.trim(),
+        inspectorRemarks.trim() || undefined
+      );
+      Alert.alert('Clarification Dispatched', 'Clarification requested. The citizen has been notified via in-app alert and email.', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      Alert.alert('Clarification Error', err?.message || 'Failed to dispatch clarification request.');
+    } finally {
+      setSubmitting(false);
+      setSubmittingStatusText('');
+    }
+  };
+
+  // Minor / No Repair Closure Handler
+  const handleCloseNoRepair = async () => {
+    if (!complaint || !user || !officer) return;
+    const finalReason = closureReason.trim() || inspectorRemarks.trim();
+    if (!finalReason) {
+      Alert.alert('Required', 'Please record your on-site inspection findings or reason for closing without major repair.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmittingStatusText('Closing complaint in records...');
+    try {
+      await closeComplaintByInspector(
+        complaint.id,
+        user.uid,
+        officer.name,
+        finalReason,
+        closureOutcome,
+        inspectorRemarks.trim() || undefined
+      );
+      Alert.alert('Complaint Closed', `Complaint has been officially closed: [${closureOutcome}]. Citizen has been notified.`, [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      Alert.alert('Closure Error', err?.message || 'Failed to close complaint.');
+    } finally {
+      setSubmitting(false);
+      setSubmittingStatusText('');
+    }
+  };
+
   if (loading || !officer) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={AppColors.primary} />
-        <Text style={styles.loadingText}>Loading Inspection Details…</Text>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.buttonPrimary} />
+        <Text style={[styles.loadingText, { color: colors.textOnDarkSecondary }]}>Loading Inspection Details…</Text>
       </SafeAreaView>
     );
   }
 
   if (!complaint) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="alert-circle-outline" size={48} color={AppColors.error} />
-        <Text style={styles.errorText}>Complaint not found.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <Text style={[styles.errorText, { color: colors.textOnDark }]}>Complaint not found.</Text>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: colors.buttonPrimary }]}>
           <Text style={styles.backBtnText}>Return</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -571,15 +650,15 @@ export default function InspectionScreen() {
     complaint.inspectionStatus === 'INVALID'
   ) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <View style={styles.accessDeniedIconBox}>
           <Ionicons name="ban" size={48} color={AppColors.error} />
         </View>
         <Text style={styles.accessDeniedTitle}>Complaint Inactive</Text>
-        <Text style={styles.accessDeniedText}>
+        <Text style={[styles.accessDeniedText, { color: colors.textOnDarkSecondary }]}>
           This complaint was rejected: Invalid Issue image, raise the complaint with the appropriate image! It is inactive and cannot undergo field inspection.
         </Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.backButton, { backgroundColor: colors.buttonPrimary }]}>
           <Text style={styles.backButtonText}>Return to Dashboard</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -593,15 +672,15 @@ export default function InspectionScreen() {
     complaint.assignedInspectorId !== user?.uid
   ) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <View style={styles.accessDeniedIconBox}>
           <Ionicons name="lock-closed" size={48} color={AppColors.error} />
         </View>
         <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-        <Text style={styles.accessDeniedText}>
+        <Text style={[styles.accessDeniedText, { color: colors.textOnDarkSecondary }]}>
           This complaint is assigned to {complaint.assignedInspectorName || 'another inspector'}. You can only inspect complaints assigned to you.
         </Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.backButton, { backgroundColor: colors.buttonPrimary }]}>
           <Text style={styles.backButtonText}>Return to My Dashboard</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -609,29 +688,29 @@ export default function InspectionScreen() {
   }
 
   const roadsInRegion = getRoadsByRegion(selectedRegion);
-  const priority = complaint.priority || complaint.severity || 'MEDIUM';
+  const priority = (complaint.priority || complaint.severity || 'MEDIUM').toUpperCase();
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center' }}>
-          <Text style={styles.headerTitle}>Field Inspector Verification</Text>
-          <Text style={styles.headerSub}>#{complaint.complaintId} • {complaint.region || selectedRegion}</Text>
+          <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>Field Inspector Verification</Text>
+          <Text style={[styles.headerSub, { color: colors.textOnDarkSecondary }]}>{complaint.complaintId} • {complaint.region || selectedRegion}</Text>
         </View>
         <View style={{ width: 24 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* On-Site Verification Protocol Banner */}
-        <View style={styles.instructionBanner}>
-          <Ionicons name="shield-checkmark-outline" size={22} color={AppColors.primary} />
+        <View style={[styles.instructionBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Ionicons name="shield-checkmark-outline" size={22} color={colors.buttonPrimary} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.instructionBannerTitle}>On-Site Verification Protocol</Text>
-            <Text style={styles.instructionBannerText}>
+            <Text style={[styles.instructionBannerTitle, { color: colors.buttonPrimary }]}>On-Site Verification Protocol</Text>
+            <Text style={[styles.instructionBannerText, { color: colors.textPrimary }]}>
               Inspect the road surface and physical condition. Record whether this issue is genuine or invalid.
             </Text>
           </View>
@@ -651,28 +730,37 @@ export default function InspectionScreen() {
         </View>
 
         {/* AI Initial vs Physical Inspector Header */}
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.cardHeaderRow}>
-            <Text style={styles.issueType}>{complaint.issueType}</Text>
+            <Text style={[styles.issueType, { color: colors.textPrimary }]}>{complaint.displayIssueName || formatDisplayIssueName(complaint.issueType)}</Text>
             <View style={styles.badgeRow}>
               <PriorityBadge priority={priority} />
-              <Text style={styles.confidenceBadge}>{complaint.confidence}% AI</Text>
+              <Text style={styles.confidenceBadge}>
+                {Math.round(complaint.confidence > 0 && complaint.confidence <= 1 ? complaint.confidence * 100 : (complaint.confidence || 0))}% AI
+              </Text>
             </View>
           </View>
-          <Text style={styles.deptText}>Department: {complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}</Text>
-          <Text style={styles.description}>{complaint.description || 'No description provided by citizen.'}</Text>
+          {complaint.priorityReason ? (
+            <View style={{ marginVertical: 6, padding: 6, backgroundColor: colors.surfaceElevated, borderRadius: 6, borderWidth: 1, borderColor: colors.borderLight }}>
+              <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '600' }}>
+                Priority Reason: <Text style={{ color: colors.textPrimary, fontWeight: '500' }}>{complaint.priorityReason}</Text>
+              </Text>
+            </View>
+          ) : null}
+          <Text style={[styles.deptText, { color: colors.buttonPrimary }]}>Department: {complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}</Text>
+          <Text style={[styles.description, { color: colors.textPrimary }]}>{complaint.description || 'No description provided by citizen.'}</Text>
           <View style={styles.citizenMetaRow}>
-            <Ionicons name="location-outline" size={14} color={AppColors.textSecondary} />
-            <Text style={styles.citizenMetaText}>GPS: {complaint.latitude?.toFixed(5)}, {complaint.longitude?.toFixed(5)}</Text>
+            <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+            <Text style={[styles.citizenMetaText, { color: colors.textSecondary }]}>GPS: {complaint.latitude?.toFixed(5)}, {complaint.longitude?.toFixed(5)}</Text>
           </View>
         </View>
 
         {/* Department Info Card */}
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.cardHeaderRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardSectionTitle}>Assigned Department</Text>
-              <Text style={styles.deptCurrentName}>{complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}</Text>
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>Assigned Department</Text>
+              <Text style={[styles.deptCurrentName, { color: colors.textPrimary }]}>{complaint.department || complaint.responsibleDepartment || 'Road Maintenance'}</Text>
             </View>
           </View>
 
@@ -704,21 +792,21 @@ export default function InspectionScreen() {
         </View>
 
         {/* Location & Maps Navigation */}
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.locationInfoRow}>
-            <View style={styles.locationIconBox}>
-              <Ionicons name="navigate" size={22} color={AppColors.primary} />
+            <View style={[styles.locationIconBox, { backgroundColor: colors.surfaceElevated }]}>
+              <Ionicons name="navigate" size={22} color={colors.buttonPrimary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.locationLabel}>Location Coordinates</Text>
-              <Text style={styles.locationCoordinates}>
+              <Text style={[styles.locationLabel, { color: colors.textSecondary }]}>Location Coordinates</Text>
+              <Text style={[styles.locationCoordinates, { color: colors.textPrimary }]}>
                 {complaint.latitude?.toFixed(6)}, {complaint.longitude?.toFixed(6)}
               </Text>
             </View>
           </View>
 
           <TouchableOpacity
-            style={styles.openMapBtn}
+            style={[styles.openMapBtn, { backgroundColor: colors.buttonPrimary }]}
             onPress={handleOpenInMaps}
             accessible
             accessibilityRole="button"
@@ -732,14 +820,15 @@ export default function InspectionScreen() {
 
         {/* Physical Condition Decision */}
         <View style={styles.sectionTitleRow}>
-          <Ionicons name="checkbox-outline" size={18} color={AppColors.primary} />
-          <Text style={styles.sectionHeaderTitle}>Actual Physical Condition *</Text>
+          <Ionicons name="checkbox-outline" size={18} color={colors.buttonPrimary} />
+          <Text style={[styles.sectionHeaderTitle, { color: colors.textOnDark }]}>Actual Physical Condition *</Text>
         </View>
 
         <View style={styles.decisionRow}>
           <TouchableOpacity
             style={[
               styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
               decision === 'genuine' && styles.decisionCardGenuineSelected,
             ]}
             onPress={() => setDecision('genuine')}
@@ -756,26 +845,104 @@ export default function InspectionScreen() {
             >
               <Ionicons
                 name="checkmark-circle"
-                size={26}
+                size={22}
                 color={decision === 'genuine' ? AppColors.white : AppColors.success}
               />
             </View>
             <Text
               style={[
                 styles.decisionTitle,
+                { color: colors.textPrimary },
                 decision === 'genuine' && styles.decisionTitleGenuine,
               ]}
             >
-              Genuine Issue
+              Verify Issue
             </Text>
-            <Text style={styles.decisionSubtitle}>
-              Defect verified on site.
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Verified for repair
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+              decision === 'clarification' && styles.decisionCardClarifySelected,
+            ]}
+            onPress={() => setDecision('clarification')}
+            activeOpacity={0.8}
+            accessible
+            accessibilityRole="radio"
+            accessibilityState={{ selected: decision === 'clarification' }}
+          >
+            <View
+              style={[
+                styles.decisionIconCircle,
+                decision === 'clarification' && styles.decisionIconCircleClarify,
+              ]}
+            >
+              <Ionicons
+                name="help-circle"
+                size={22}
+                color={decision === 'clarification' ? AppColors.white : '#D97706'}
+              />
+            </View>
+            <Text
+              style={[
+                styles.decisionTitle,
+                { color: colors.textPrimary },
+                decision === 'clarification' && styles.decisionTitleClarify,
+              ]}
+            >
+              Clarify
+            </Text>
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Ask citizen details
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+              decision === 'no_repair' && styles.decisionCardNoRepairSelected,
+            ]}
+            onPress={() => setDecision('no_repair')}
+            activeOpacity={0.8}
+            accessible
+            accessibilityRole="radio"
+            accessibilityState={{ selected: decision === 'no_repair' }}
+          >
+            <View
+              style={[
+                styles.decisionIconCircle,
+                decision === 'no_repair' && styles.decisionIconCircleNoRepair,
+              ]}
+            >
+              <Ionicons
+                name="shield-checkmark"
+                size={22}
+                color={decision === 'no_repair' ? AppColors.white : '#2563EB'}
+              />
+            </View>
+            <Text
+              style={[
+                styles.decisionTitle,
+                { color: colors.textPrimary },
+                decision === 'no_repair' && styles.decisionTitleNoRepair,
+              ]}
+            >
+              No Repair
+            </Text>
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Minor / Close
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.decisionCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
               decision === 'fake' && styles.decisionCardFakeSelected,
             ]}
             onPress={() => setDecision('fake')}
@@ -792,30 +959,103 @@ export default function InspectionScreen() {
             >
               <Ionicons
                 name="close-circle"
-                size={26}
+                size={22}
                 color={decision === 'fake' ? AppColors.white : AppColors.error}
               />
             </View>
             <Text
               style={[
                 styles.decisionTitle,
+                { color: colors.textPrimary },
                 decision === 'fake' && styles.decisionTitleFake,
               ]}
             >
               Fake / Invalid
             </Text>
-            <Text style={styles.decisionSubtitle}>
-              No defect or invalid.
+            <Text style={[styles.decisionSubtitle, { color: colors.textSecondary }]}>
+              Reject report
             </Text>
           </TouchableOpacity>
         </View>
 
+        {decision === 'clarification' ? (
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: '#F59E0B', borderWidth: 1.5 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="help-circle" size={20} color="#D97706" />
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Clarification Request for Citizen *
+              </Text>
+            </View>
+            <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
+              Specify the exact clarification needed from the citizen (e.g., landmark, defect location, access details):
+            </Text>
+            <TextInput
+              style={[styles.textInput, { minHeight: 70, backgroundColor: colors.surfaceElevated, color: colors.textPrimary, borderColor: colors.border, marginTop: 8 }]}
+              placeholder="e.g. Please clarify exact landmark near bus stop or whether pothole is on left service lane..."
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              value={clarificationQuestion}
+              onChangeText={setClarificationQuestion}
+            />
+          </View>
+        ) : null}
+
+        {decision === 'no_repair' ? (
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: '#2563EB', borderWidth: 1.5 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="shield-checkmark" size={20} color="#2563EB" />
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Minor / No Major Repair Required Findings *
+              </Text>
+            </View>
+            <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
+              Select the field assessment outcome justifying closure without major repair assignment:
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 }}>
+              {CLOSURE_OUTCOMES.map(outcome => (
+                <TouchableOpacity
+                  key={outcome}
+                  style={[
+                    styles.optionChip,
+                    { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                    closureOutcome === outcome && { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+                  ]}
+                  onPress={() => setClosureOutcome(outcome)}
+                >
+                  <Text
+                    style={[
+                      styles.optionChipText,
+                      { color: colors.textPrimary },
+                      closureOutcome === outcome && { color: AppColors.white, fontWeight: '700' },
+                    ]}
+                  >
+                    {outcome}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.fieldSub, { color: colors.textSecondary, marginTop: 6 }]}>
+              Closure Reason & Field Inspection Findings *:
+            </Text>
+            <TextInput
+              style={[styles.textInput, { minHeight: 70, backgroundColor: colors.surfaceElevated, color: colors.textPrimary, borderColor: colors.border, marginTop: 8 }]}
+              placeholder="Explain on-site findings: e.g. Surface wear is within standard tolerance; no structural cavity found. Routine monitoring scheduled."
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              value={closureReason}
+              onChangeText={setClosureReason}
+            />
+          </View>
+        ) : null}
+
         {decision === 'genuine' ? (
           <>
             {/* FORM SECTION 1: VERIFIED ISSUE TYPE */}
-            <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>1. Physical Issue Verification</Text>
-              <Text style={styles.fieldSub}>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>1. Physical Issue Verification</Text>
+              <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
                 Inspect the road surface on-site and confirm or correct the actual defect:
               </Text>
 
@@ -825,7 +1065,8 @@ export default function InspectionScreen() {
                     key={opt.key}
                     style={[
                       styles.optionChip,
-                      verifiedIssue === opt.key && styles.optionChipActive,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                      verifiedIssue === opt.key && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
                     ]}
                     onPress={() => handleIssueChange(opt.key)}
                     accessible
@@ -835,12 +1076,12 @@ export default function InspectionScreen() {
                     <Ionicons
                       name={verifiedIssue === opt.key ? 'checkmark-circle' : 'ellipse-outline'}
                       size={16}
-                      color={verifiedIssue === opt.key ? AppColors.white : AppColors.textSecondary}
+                      color={verifiedIssue === opt.key ? '#FFFFFF' : colors.textSecondary}
                     />
                     <Text
                       style={[
                         styles.optionChipText,
-                        verifiedIssue === opt.key && styles.optionChipTextActive,
+                        { color: verifiedIssue === opt.key ? '#FFFFFF' : colors.textPrimary },
                       ]}
                     >
                       {opt.label}
@@ -851,9 +1092,9 @@ export default function InspectionScreen() {
             </View>
 
             {/* FORM SECTION 2: SEVERITY & RESOLUTION TIME ESTIMATION */}
-            <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>2. Severity & Resolution Time Estimation</Text>
-              <Text style={styles.fieldSub}>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>2. Severity & Resolution Time Estimation</Text>
+              <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
                 Resolution time must be 1 to 7 days based on road defect severity:
               </Text>
 
@@ -864,6 +1105,7 @@ export default function InspectionScreen() {
                     key={sev}
                     style={[
                       styles.sevChip,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
                       severity === sev && (sev === 'HIGH' ? styles.sevHigh : sev === 'MEDIUM' ? styles.sevMed : styles.sevLow),
                     ]}
                     onPress={() => handleSeverityChange(sev)}
@@ -874,7 +1116,7 @@ export default function InspectionScreen() {
                     <Text
                       style={[
                         styles.sevChipText,
-                        severity === sev && styles.sevChipTextActive,
+                        { color: severity === sev ? '#FFFFFF' : colors.textPrimary },
                       ]}
                     >
                       {sev}
@@ -882,7 +1124,7 @@ export default function InspectionScreen() {
                     <Text
                       style={[
                         styles.sevSubText,
-                        severity === sev && styles.sevChipTextActive,
+                        { color: severity === sev ? 'rgba(255,255,255,0.9)' : colors.textSecondary },
                       ]}
                     >
                       {sev === 'LOW' ? '1–2 Days' : sev === 'MEDIUM' ? '3–4 Days' : '5–7 Days'}
@@ -892,14 +1134,15 @@ export default function InspectionScreen() {
               </View>
 
               {/* Resolution Days Selector (1 to 7 Days) */}
-              <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Estimated Resolution Duration (Days: 1–7):</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 14 }]}>Estimated Resolution Duration (Days: 1–7):</Text>
               <View style={styles.daysRow}>
                 {[1, 2, 3, 4, 5, 6, 7].map(d => (
                   <TouchableOpacity
                     key={d}
                     style={[
                       styles.dayChip,
-                      resolutionDays === d && styles.dayChipActive,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                      resolutionDays === d && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
                     ]}
                     onPress={() => setResolutionDays(d)}
                     accessible
@@ -909,7 +1152,7 @@ export default function InspectionScreen() {
                     <Text
                       style={[
                         styles.dayChipText,
-                        resolutionDays === d && styles.dayChipTextActive,
+                        { color: resolutionDays === d ? '#FFFFFF' : colors.textPrimary },
                       ]}
                     >
                       {d}d
@@ -919,19 +1162,19 @@ export default function InspectionScreen() {
               </View>
 
               {/* Manual Estimated Budget (INR) */}
-              <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Manual Budget Estimation (INR ₹) *:</Text>
-              <Text style={styles.fieldSub}>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 14 }]}>Manual Budget Estimation (INR ₹) *:</Text>
+              <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
                 Enter the repair budget estimated manually based on physical on-site measurements and defect severity:
               </Text>
-              <View style={styles.budgetInputRow}>
-                <Text style={styles.currencySymbol}>₹</Text>
+              <View style={[styles.budgetInputRow, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
+                <Text style={[styles.currencySymbol, { color: colors.buttonPrimary }]}>₹</Text>
                 <TextInput
-                  style={styles.budgetInput}
+                  style={[styles.budgetInput, { color: colors.inputText }]}
                   keyboardType="numeric"
                   value={estimatedBudget}
                   onChangeText={setEstimatedBudget}
                   placeholder="e.g. 25000"
-                  placeholderTextColor={AppColors.placeholder}
+                  placeholderTextColor={colors.inputPlaceholder}
                 />
               </View>
 
@@ -942,7 +1185,8 @@ export default function InspectionScreen() {
                     key={amt}
                     style={[
                       styles.quickBudgetChip,
-                      parseFloat(estimatedBudget) === amt && styles.quickBudgetChipActive,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                      parseFloat(estimatedBudget) === amt && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
                     ]}
                     onPress={() => setEstimatedBudget(String(amt))}
                     accessible
@@ -952,7 +1196,7 @@ export default function InspectionScreen() {
                     <Text
                       style={[
                         styles.quickBudgetText,
-                        parseFloat(estimatedBudget) === amt && styles.quickBudgetTextActive,
+                        { color: parseFloat(estimatedBudget) === amt ? '#FFFFFF' : colors.textPrimary },
                       ]}
                     >
                       ₹{(amt / 1000).toFixed(0)}k
@@ -975,28 +1219,29 @@ export default function InspectionScreen() {
             </View>
 
             {/* FORM SECTION 3: ROAD IDENTIFICATION & MAINTENANCE AUTHORITY */}
-            <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>3. Road & Responsible Maintenance Authority</Text>
-              <Text style={styles.fieldSub}>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>3. Road & Responsible Maintenance Authority</Text>
+              <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
                 Identify the specific road segment and confirming department:
               </Text>
 
               {/* Coimbatore 4 Regions */}
-              <Text style={styles.fieldLabel}>Coimbatore Region:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary }]}>Coimbatore Region:</Text>
               <View style={styles.regionSelectRow}>
                 {ALL_COIMBATORE_REGIONS.map(reg => (
                   <TouchableOpacity
                     key={reg}
                     style={[
                       styles.regSelectChip,
-                      selectedRegion === reg && styles.regSelectChipActive,
+                      { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                      selectedRegion === reg && { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
                     ]}
                     onPress={() => handleRegionChange(reg)}
                   >
                     <Text
                       style={[
                         styles.regSelectText,
-                        selectedRegion === reg && styles.regSelectTextActive,
+                        { color: selectedRegion === reg ? '#FFFFFF' : colors.textPrimary },
                       ]}
                     >
                       {reg}
@@ -1006,13 +1251,14 @@ export default function InspectionScreen() {
               </View>
 
               {/* Road Catalog Selector */}
-              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Identified Road in {selectedRegion}:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 12 }]}>Identified Road in {selectedRegion}:</Text>
               {roadsInRegion.map(road => (
                 <TouchableOpacity
                   key={road.roadId}
                   style={[
                     styles.roadCard,
-                    selectedRoad?.roadId === road.roadId && styles.roadCardActive,
+                    { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                    selectedRoad?.roadId === road.roadId && { borderColor: colors.buttonPrimary, borderWidth: 1.5 },
                   ]}
                   onPress={() => {
                     setSelectedRoad(road);
@@ -1021,53 +1267,55 @@ export default function InspectionScreen() {
                   }}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.roadNameTitle}>{road.roadName}</Text>
-                    <Text style={styles.roadTypeBadge}>{road.roadType}</Text>
-                    <Text style={styles.roadAuthoritySub}>Maintained by: {road.maintainedBy}</Text>
+                    <Text style={[styles.roadNameTitle, { color: colors.textPrimary }]}>{road.roadName}</Text>
+                    <Text style={[styles.roadTypeBadge, { color: colors.buttonPrimary }]}>{road.roadType}</Text>
+                    <Text style={[styles.roadAuthoritySub, { color: colors.textSecondary }]}>Maintained by: {road.maintainedBy}</Text>
                   </View>
                   {selectedRoad?.roadId === road.roadId && (
-                    <Ionicons name="checkmark-circle" size={20} color={AppColors.primary} />
+                    <Ionicons name="checkmark-circle" size={20} color={colors.buttonPrimary} />
                   )}
                 </TouchableOpacity>
               ))}
 
               {/* Custom Road Name */}
-              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Road Name / Street:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 12 }]}>Road Name / Street:</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 value={customRoadName}
                 onChangeText={setCustomRoadName}
                 placeholder="e.g. Avinashi Road, Peelamedu"
+                placeholderTextColor={colors.inputPlaceholder}
               />
 
-              <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Maintenance Authority / Department:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 10 }]}>Maintenance Authority / Department:</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 value={customMaintenanceAuthority}
                 onChangeText={setCustomMaintenanceAuthority}
                 placeholder="e.g. State Highways Department (C&M) / CCMC"
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
 
             {/* FORM SECTION 4: MULTI-DEPARTMENT INVOLVEMENT */}
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.toggleRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardSectionTitle}>4. Secondary Department Involvement</Text>
-                  <Text style={styles.fieldSub}>
+                  <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>4. Secondary Department Involvement</Text>
+                  <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>
                     Is another department (water line, electricity, UGD) involved in the defect?
                   </Text>
                 </View>
                 <Switch
                   value={isOtherDeptInvolved}
                   onValueChange={setIsOtherDeptInvolved}
-                  trackColor={{ false: AppColors.border, true: AppColors.primary }}
+                  trackColor={{ false: colors.border, true: colors.buttonPrimary }}
                 />
               </View>
 
               {isOtherDeptInvolved && (
-                <View style={styles.multiDeptContainer}>
-                  <Text style={styles.fieldLabel}>Select Involved Secondary Departments:</Text>
+                <View style={[styles.multiDeptContainer, { borderTopColor: colors.border }]}>
+                  <Text style={[styles.fieldLabel, { color: colors.textPrimary }]}>Select Involved Secondary Departments:</Text>
                   {SECONDARY_DEPARTMENTS.map(dept => {
                     const isSelected = selectedDepts.includes(dept.departmentName);
                     return (
@@ -1075,28 +1323,29 @@ export default function InspectionScreen() {
                         key={dept.departmentId}
                         style={[
                           styles.secDeptCard,
-                          isSelected && styles.secDeptCardActive,
+                          { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
+                          isSelected && { borderColor: colors.buttonPrimary, borderWidth: 1.5 },
                         ]}
                         onPress={() => handleToggleSecondaryDept(dept.departmentName)}
                       >
                         <Ionicons
                           name={isSelected ? 'checkbox' : 'square-outline'}
                           size={18}
-                          color={isSelected ? AppColors.primary : AppColors.textSecondary}
+                          color={isSelected ? colors.buttonPrimary : colors.textSecondary}
                         />
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.secDeptName}>{dept.departmentName}</Text>
-                          <Text style={styles.secDeptDesc}>{dept.domain}</Text>
+                          <Text style={[styles.secDeptName, { color: colors.textPrimary }]}>{dept.departmentName}</Text>
+                          <Text style={[styles.secDeptDesc, { color: colors.textSecondary }]}>{dept.domain}</Text>
                         </View>
                       </TouchableOpacity>
                     );
                   })}
 
-                  <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Involvement Reason & Notes:</Text>
+                  <Text style={[styles.fieldLabel, { color: colors.textPrimary, marginTop: 10 }]}>Involvement Reason & Notes:</Text>
                   <TextInput
-                    style={styles.textInput}
+                    style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                     placeholder="e.g. Pipeline burst under road asphalt requiring TWAD repair before repaving"
-                    placeholderTextColor={AppColors.placeholder}
+                    placeholderTextColor={colors.inputPlaceholder}
                     value={otherDeptReason}
                     onChangeText={setOtherDeptReason}
                     multiline
@@ -1108,12 +1357,12 @@ export default function InspectionScreen() {
         ) : null}
 
         {/* Section: Inspection Remarks */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionTitle}>{decision === 'genuine' ? '5. Inspector Observations & Physical Remarks *' : 'Rejection Observation Notes *'}</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>{decision === 'genuine' ? '5. Inspector Observations & Physical Remarks *' : 'Rejection Observation Notes *'}</Text>
           <TextInput
-            style={[styles.textInput, { minHeight: 80 }]}
+            style={[styles.textInput, { minHeight: 80, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
             placeholder={decision === 'genuine' ? "Enter on-site physical inspection notes (sub-base condition, traffic impact, materials required)..." : "Explain why this report is considered invalid or fake..."}
-            placeholderTextColor={AppColors.placeholder}
+            placeholderTextColor={colors.inputPlaceholder}
             value={inspectorRemarks}
             onChangeText={setInspectorRemarks}
             multiline
@@ -1122,12 +1371,12 @@ export default function InspectionScreen() {
         </View>
 
         {/* Section: Evidence Photo */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionTitle}>On-Site Evidence Photo (Optional)</Text>
-          <Text style={styles.fieldSub}>Attach a photo captured directly on site as verification proof:</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.cardSectionTitle, { color: colors.textPrimary }]}>On-Site Evidence Photo (Optional)</Text>
+          <Text style={[styles.fieldSub, { color: colors.textSecondary }]}>Attach a photo captured directly on site as verification proof:</Text>
 
           {evidenceUri ? (
-            <View style={styles.evidencePreviewContainer}>
+            <View style={[styles.evidencePreviewContainer, { borderColor: colors.border }]}>
               <Image source={{ uri: evidenceUri }} style={styles.evidenceImage} resizeMode="cover" />
               <TouchableOpacity
                 style={styles.removeEvidenceBtn}
@@ -1142,31 +1391,31 @@ export default function InspectionScreen() {
           ) : (
             <View style={styles.photoActionRow}>
               <TouchableOpacity
-                style={styles.photoActionBtn}
+                style={[styles.photoActionBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={handleCapturePhoto}
                 disabled={submitting}
               >
-                <Ionicons name="camera" size={20} color={AppColors.primary} />
-                <Text style={styles.photoActionBtnText}>Take Photo</Text>
+                <Ionicons name="camera" size={20} color={colors.buttonPrimary} />
+                <Text style={[styles.photoActionBtnText, { color: colors.buttonPrimary }]}>Take Photo</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.photoActionBtn}
+                style={[styles.photoActionBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={handlePickPhoto}
                 disabled={submitting}
               >
-                <Ionicons name="images-outline" size={20} color={AppColors.primary} />
-                <Text style={styles.photoActionBtnText}>Choose Gallery</Text>
+                <Ionicons name="images-outline" size={20} color={colors.buttonPrimary} />
+                <Text style={[styles.photoActionBtnText, { color: colors.buttonPrimary }]}>Choose Gallery</Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {/* Action Buttons: Confirm Valid vs Reject */}
+        {/* Action Buttons: Confirm Valid vs Clarify vs No Repair vs Reject */}
         <View style={styles.actionBtnRow}>
           {decision === 'genuine' ? (
             <TouchableOpacity
-              style={[styles.verifySubmitBtn, submitting && styles.btnDisabled]}
+              style={[styles.verifySubmitBtn, { backgroundColor: colors.buttonPrimary }, submitting && styles.btnDisabled]}
               onPress={handleConfirmVerification}
               disabled={submitting}
               accessible
@@ -1184,6 +1433,52 @@ export default function InspectionScreen() {
                 <View style={styles.submitBtnContent}>
                   <Ionicons name="shield-checkmark" size={18} color={AppColors.white} />
                   <Text style={styles.verifySubmitBtnText}>Submit Field Verification</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : decision === 'clarification' ? (
+            <TouchableOpacity
+              style={[styles.verifySubmitBtn, { backgroundColor: '#D97706' }, submitting && styles.btnDisabled]}
+              onPress={handleRequestClarification}
+              disabled={submitting}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Dispatch Clarification Request"
+            >
+              {submitting ? (
+                <View style={styles.submittingRow}>
+                  <ActivityIndicator color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>
+                    {submittingStatusText || 'Dispatching...'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.submitBtnContent}>
+                  <Ionicons name="help-circle" size={18} color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>Dispatch Clarification Request</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : decision === 'no_repair' ? (
+            <TouchableOpacity
+              style={[styles.verifySubmitBtn, { backgroundColor: '#2563EB' }, submitting && styles.btnDisabled]}
+              onPress={handleCloseNoRepair}
+              disabled={submitting}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Close Complaint (No Repair Needed)"
+            >
+              {submitting ? (
+                <View style={styles.submittingRow}>
+                  <ActivityIndicator color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>
+                    {submittingStatusText || 'Closing...'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.submitBtnContent}>
+                  <Ionicons name="checkmark-done-circle" size={18} color={AppColors.white} />
+                  <Text style={styles.verifySubmitBtnText}>Close Complaint (No Repair Needed)</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -1206,13 +1501,13 @@ export default function InspectionScreen() {
       {/* Reject Reason Modal */}
       <Modal visible={showRejectModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Ionicons name="alert-circle" size={24} color={AppColors.error} />
               <Text style={styles.modalTitle}>Reject Complaint (Invalid / Fake)</Text>
             </View>
 
-            <Text style={styles.modalDesc}>
+            <Text style={[styles.modalDesc, { color: colors.textSecondary }]}>
               Select the verified reason for rejecting this road complaint:
             </Text>
 
@@ -1222,18 +1517,20 @@ export default function InspectionScreen() {
                   key={preset}
                   style={[
                     styles.presetRow,
-                    selectedPresetReason === preset && styles.presetRowActive,
+                    { borderBottomColor: colors.borderLight },
+                    selectedPresetReason === preset && { backgroundColor: isDark ? 'rgba(239, 68, 68, 0.2)' : '#FEF2F2' },
                   ]}
                   onPress={() => setSelectedPresetReason(preset)}
                 >
                   <Ionicons
                     name={selectedPresetReason === preset ? 'radio-button-on' : 'radio-button-off'}
                     size={16}
-                    color={selectedPresetReason === preset ? AppColors.error : AppColors.textSecondary}
+                    color={selectedPresetReason === preset ? AppColors.error : colors.textSecondary}
                   />
                   <Text
                     style={[
                       styles.presetText,
+                      { color: colors.textPrimary },
                       selectedPresetReason === preset && styles.presetTextActive,
                     ]}
                   >
@@ -1245,8 +1542,9 @@ export default function InspectionScreen() {
 
             {selectedPresetReason.startsWith('Other') && (
               <TextInput
-                style={[styles.textInput, { marginTop: 10 }]}
+                style={[styles.textInput, { marginTop: 10, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 placeholder="Specific rejection reason..."
+                placeholderTextColor={colors.inputPlaceholder}
                 value={customRejectReason}
                 onChangeText={setCustomRejectReason}
               />
@@ -1254,11 +1552,11 @@ export default function InspectionScreen() {
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={() => setShowRejectModal(false)}
                 disabled={submitting}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalRejectConfirmBtn, submitting && styles.btnDisabled]}
@@ -1560,14 +1858,22 @@ const styles = StyleSheet.create({
     borderColor: AppColors.success,
     backgroundColor: '#F0FDF4',
   },
+  decisionCardClarifySelected: {
+    borderColor: '#D97706',
+    backgroundColor: '#FFFBEB',
+  },
+  decisionCardNoRepairSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
   decisionCardFakeSelected: {
     borderColor: AppColors.error,
     backgroundColor: '#FEF2F2',
   },
   decisionIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1576,11 +1882,17 @@ const styles = StyleSheet.create({
   decisionIconCircleGenuine: {
     backgroundColor: AppColors.success,
   },
+  decisionIconCircleClarify: {
+    backgroundColor: '#D97706',
+  },
+  decisionIconCircleNoRepair: {
+    backgroundColor: '#2563EB',
+  },
   decisionIconCircleFake: {
     backgroundColor: AppColors.error,
   },
   decisionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: AppColors.textPrimary,
     marginBottom: 2,
@@ -1588,6 +1900,12 @@ const styles = StyleSheet.create({
   },
   decisionTitleGenuine: {
     color: AppColors.success,
+  },
+  decisionTitleClarify: {
+    color: '#D97706',
+  },
+  decisionTitleNoRepair: {
+    color: '#2563EB',
   },
   decisionTitleFake: {
     color: AppColors.error,

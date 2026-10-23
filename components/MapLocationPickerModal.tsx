@@ -1,4 +1,5 @@
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { reverseGeocodeLocation } from '@/services/complaintService';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -49,6 +50,7 @@ export default function MapLocationPickerModal({
   onConfirm,
   onClose,
 }: Props) {
+  const { colors, isDark } = useAppTheme();
   const [latitude, setLatitude] = useState<number>(initialLatitude || DEFAULT_LAT);
   const [longitude, setLongitude] = useState<number>(initialLongitude || DEFAULT_LNG);
   const [address, setAddress] = useState<string>(initialAddress || '');
@@ -184,14 +186,14 @@ export default function MapLocationPickerModal({
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <SafeAreaView style={styles.safeContainer}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
               <View style={styles.headerTitleRow}>
-                <Ionicons name="map" size={22} color={AppColors.primary} />
+                <Ionicons name="map" size={22} color={colors.buttonPrimary} />
                 <View>
-                  <Text style={styles.headerTitle}>Select Issue Location</Text>
-                  <Text style={styles.headerSubtitle}>Pinpoint the exact location where the road issue exists</Text>
+                  <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Select Issue Location</Text>
+                  <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Pinpoint the exact location where the road issue exists</Text>
                 </View>
               </View>
               <TouchableOpacity
@@ -200,17 +202,17 @@ export default function MapLocationPickerModal({
                 accessibilityRole="button"
                 accessibilityLabel="Close map selector"
               >
-                <Ionicons name="close" size={24} color={AppColors.textPrimary} />
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
             {/* Search Landmark Bar */}
-            <View style={styles.searchBarRow}>
-              <Ionicons name="search-outline" size={18} color={AppColors.placeholder} style={styles.searchIcon} />
+            <View style={[styles.searchBarRow, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
+              <Ionicons name="search-outline" size={18} color={colors.inputPlaceholder} style={styles.searchIcon} />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.inputText }]}
                 placeholder="Search landmark, street, or area name..."
-                placeholderTextColor={AppColors.placeholder}
+                placeholderTextColor={colors.inputPlaceholder}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 onSubmitEditing={handleSearch}
@@ -218,16 +220,16 @@ export default function MapLocationPickerModal({
               />
               {searchQuery.length > 0 && (
                 <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchBtn}>
-                  <Ionicons name="close-circle" size={16} color={AppColors.placeholder} />
+                  <Ionicons name="close-circle" size={16} color={colors.inputPlaceholder} />
                 </TouchableOpacity>
               )}
               <TouchableOpacity
-                style={[styles.searchSubmitBtn, searching && styles.disabledBtn]}
+                style={[styles.searchSubmitBtn, { backgroundColor: colors.buttonPrimary }, searching && styles.disabledBtn]}
                 onPress={handleSearch}
                 disabled={searching}
               >
                 {searching ? (
-                  <ActivityIndicator size="small" color={AppColors.white} />
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.searchSubmitBtnText}>Search</Text>
                 )}
@@ -240,18 +242,18 @@ export default function MapLocationPickerModal({
                 {QUICK_LANDMARKS.map((item, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={styles.chip}
+                    style={[styles.chip, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                     onPress={() => updateCoordinates(item.lat, item.lng)}
                   >
-                    <Ionicons name="pin-outline" size={12} color={AppColors.primary} />
-                    <Text style={styles.chipText}>{item.label}</Text>
+                    <Ionicons name="pin-outline" size={12} color={colors.buttonPrimary} />
+                    <Text style={[styles.chipText, { color: colors.textPrimary }]}>{item.label}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>
 
             {/* Visual Map Canvas / Interactive Viewport */}
-            <View style={styles.mapViewport}>
+            <View style={[styles.mapViewport, { borderColor: colors.border }]}>
               {/* Map Tile Background */}
               <Image
                 source={{ uri: tileUrl }}
@@ -266,20 +268,20 @@ export default function MapLocationPickerModal({
               <View style={styles.pinContainer} pointerEvents="none">
                 <View style={styles.pulseRing} />
                 <View style={styles.pinShadow} />
-                <Ionicons name="location" size={42} color={AppColors.primary} style={styles.pinIcon} />
+                <Ionicons name="location" size={42} color={colors.buttonPrimary} style={styles.pinIcon} />
                 <View style={styles.pinCenterDot} />
               </View>
 
               {/* Map Floating Actions: Pan D-Pad & Zoom */}
               <View style={styles.mapControlsOverlay}>
                 {/* D-Pad Pan Navigation */}
-                <View style={styles.dpadContainer}>
+                <View style={[styles.dpadContainer, { backgroundColor: isDark ? 'rgba(16, 24, 32, 0.92)' : 'rgba(255, 255, 255, 0.92)', borderColor: colors.border }]}>
                   <TouchableOpacity
                     style={[styles.dpadBtn, styles.dpadNorth]}
                     onPress={panNorth}
                     accessibilityLabel="Pan north"
                   >
-                    <Ionicons name="chevron-up" size={20} color={AppColors.textPrimary} />
+                    <Ionicons name="chevron-up" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                   </TouchableOpacity>
 
                   <View style={styles.dpadMiddleRow}>
@@ -288,11 +290,11 @@ export default function MapLocationPickerModal({
                       onPress={panWest}
                       accessibilityLabel="Pan west"
                     >
-                      <Ionicons name="chevron-back" size={20} color={AppColors.textPrimary} />
+                      <Ionicons name="chevron-back" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                     </TouchableOpacity>
 
                     <View style={styles.dpadCenter}>
-                      <Ionicons name="scan-outline" size={16} color={AppColors.primary} />
+                      <Ionicons name="scan-outline" size={16} color={colors.buttonPrimary} />
                     </View>
 
                     <TouchableOpacity
@@ -300,7 +302,7 @@ export default function MapLocationPickerModal({
                       onPress={panEast}
                       accessibilityLabel="Pan east"
                     >
-                      <Ionicons name="chevron-forward" size={20} color={AppColors.textPrimary} />
+                      <Ionicons name="chevron-forward" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                     </TouchableOpacity>
                   </View>
 
@@ -309,38 +311,38 @@ export default function MapLocationPickerModal({
                     onPress={panSouth}
                     accessibilityLabel="Pan south"
                   >
-                    <Ionicons name="chevron-down" size={20} color={AppColors.textPrimary} />
+                    <Ionicons name="chevron-down" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                   </TouchableOpacity>
                 </View>
 
                 {/* Right Column: Zoom & Center GPS */}
                 <View style={styles.rightControls}>
                   <TouchableOpacity
-                    style={styles.mapControlBtn}
+                    style={[styles.mapControlBtn, { backgroundColor: isDark ? 'rgba(16, 24, 32, 0.95)' : 'rgba(255, 255, 255, 0.95)', borderColor: colors.border }]}
                     onPress={() => setZoomLevel(prev => Math.min(18, prev + 1))}
                     accessibilityLabel="Zoom in"
                   >
-                    <Ionicons name="add" size={20} color={AppColors.textPrimary} />
+                    <Ionicons name="add" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.mapControlBtn}
+                    style={[styles.mapControlBtn, { backgroundColor: isDark ? 'rgba(16, 24, 32, 0.95)' : 'rgba(255, 255, 255, 0.95)', borderColor: colors.border }]}
                     onPress={() => setZoomLevel(prev => Math.max(12, prev - 1))}
                     accessibilityLabel="Zoom out"
                   >
-                    <Ionicons name="remove" size={20} color={AppColors.textPrimary} />
+                    <Ionicons name="remove" size={20} color={isDark ? colors.textOnDark : AppColors.textPrimary} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.mapControlBtn, styles.gpsCenterBtn]}
+                    style={[styles.mapControlBtn, styles.gpsCenterBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                     onPress={handleUseCurrentGPS}
                     disabled={locatingGPS}
                     accessibilityLabel="Center on my GPS"
                   >
                     {locatingGPS ? (
-                      <ActivityIndicator size="small" color={AppColors.primary} />
+                      <ActivityIndicator size="small" color={colors.buttonPrimary} />
                     ) : (
-                      <Ionicons name="locate" size={20} color={AppColors.primary} />
+                      <Ionicons name="locate" size={20} color={colors.buttonPrimary} />
                     )}
                   </TouchableOpacity>
                 </View>
@@ -354,13 +356,13 @@ export default function MapLocationPickerModal({
             </View>
 
             {/* Selected Location Summary Card */}
-            <View style={styles.locationSummaryCard}>
+            <View style={[styles.locationSummaryCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
               <View style={styles.locationSummaryTop}>
                 <View style={styles.locationSummaryBadge}>
-                  <Ionicons name="navigate-circle" size={16} color={AppColors.primary} />
-                  <Text style={styles.locationSummaryBadgeText}>Selected Issue Location</Text>
+                  <Ionicons name="navigate-circle" size={16} color={colors.buttonPrimary} />
+                  <Text style={[styles.locationSummaryBadgeText, { color: colors.buttonPrimary }]}>Selected Issue Location</Text>
                 </View>
-                <Text style={styles.coordsText}>
+                <Text style={[styles.coordsText, { color: colors.textSecondary }]}>
                   {latitude.toFixed(5)}, {longitude.toFixed(5)}
                 </Text>
               </View>
@@ -368,12 +370,12 @@ export default function MapLocationPickerModal({
               <View style={styles.addressRow}>
                 {loadingAddress ? (
                   <View style={styles.addressLoadingRow}>
-                    <ActivityIndicator size="small" color={AppColors.primary} />
-                    <Text style={styles.addressLoadingText}>Reverse geocoding address...</Text>
+                    <ActivityIndicator size="small" color={colors.buttonPrimary} />
+                    <Text style={[styles.addressLoadingText, { color: colors.textSecondary }]}>Reverse geocoding address...</Text>
                   </View>
                 ) : (
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.addressText} numberOfLines={2}>
+                    <Text style={[styles.addressText, { color: colors.textPrimary }]} numberOfLines={2}>
                       {address || 'Fetching address details...'}
                     </Text>
                   </View>
@@ -384,17 +386,17 @@ export default function MapLocationPickerModal({
             {/* Footer Buttons */}
             <View style={styles.footerRow}>
               <TouchableOpacity
-                style={styles.cancelBtn}
+                style={[styles.cancelBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
                 onPress={onClose}
                 accessible
                 accessibilityRole="button"
                 accessibilityLabel="Cancel map selection"
               >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text style={[styles.cancelBtnText, { color: colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.confirmBtn}
+                style={[styles.confirmBtn, { backgroundColor: colors.buttonPrimary }]}
                 onPress={handleConfirm}
                 accessible
                 accessibilityRole="button"

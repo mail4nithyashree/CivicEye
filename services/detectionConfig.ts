@@ -1,11 +1,8 @@
-// Centralized ONNX detection configuration.
-// Change thresholds here — nowhere else in the codebase.
+// Vision AI detection & priority configuration.
+// Centralized municipal civic infrastructure thresholds.
 
 // Minimum confidence to accept a detection (configurable threshold)
 export const DETECTION_THRESHOLD = 0.25; 
-
-// IoU overlap threshold for Non-Maximum Suppression (NMS)
-export const IOU_THRESHOLD = 0.45;
 
 // Road presence validation thresholds
 export const ROAD_VALIDATION_THRESHOLD = 0.45;  // minimum score to consider image a road scene
@@ -27,83 +24,242 @@ export type DetectedIssueType =
 
 export type Priority = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 
-// YOLO model input dimensions (must match training config)
-export const MODEL_INPUT_WIDTH = 640;
-export const MODEL_INPUT_HEIGHT = 640;
+export interface PriorityEvaluation {
+  priority: Priority;
+  reason: string;
+}
 
-export function calculatePriority(
-  issueType: DetectedIssueType,
+/**
+ * Calculates priority and severity with human-readable municipal reason.
+ * Evaluates:
+ * 1. Validated issue type
+ * 2. Visible evidence (bounding box area, detection count)
+ * 3. Description safety hazard context (swerve, collision, depth, pedestrian risk, active lane)
+ * 4. Never lets confidence alone determine priority.
+ */
+export function calculatePriorityWithExplanation(
+  issueType: DetectedIssueType | string,
   confidence: number,
   boundingBox?: { width: number; height: number },
-  detectionCount = 1
-): Priority {
-  if (issueType === 'no_major_issue') return 'NONE';
+  detectionCount = 1,
+  description?: string
+): PriorityEvaluation {
+  if (!issueType || issueType === 'no_major_issue' || issueType.includes('Invalid') || issueType.includes('unclear')) {
+    return { priority: 'NONE', reason: 'None: No active infrastructure defect reported' };
+  }
 
+  const normType = issueType.trim().toLowerCase();
+  const desc = (description || '').toLowerCase();
   const area = boundingBox ? boundingBox.width * boundingBox.height : 0;
 
-  // Potholes: High urgency vehicular & road safety hazard
-  if (issueType === 'pothole') {
-    if (confidence >= 0.45 || area >= 0.08 || detectionCount > 1) return 'HIGH';
-    if (confidence >= 0.28 || area >= 0.03) return 'MEDIUM';
-    return 'LOW';
+  // Safety risk keywords from citizen description
+  const hasUrgentHazard =
+    desc.includes('deep') ||
+    desc.includes('crater') ||
+    desc.includes('swerve') ||
+    desc.includes('accident') ||
+    desc.includes('crash') ||
+    desc.includes('collision') ||
+    desc.includes('danger') ||
+    desc.includes('hazardous') ||
+    desc.includes('severe') ||
+    desc.includes('active lane') ||
+    desc.includes('traffic lane') ||
+    desc.includes('two-wheeler') ||
+    desc.includes('two wheeler') ||
+    desc.includes('bike') ||
+    desc.includes('pedestrian') ||
+    desc.includes('school') ||
+    desc.includes('hospital') ||
+    desc.includes('pieces') ||
+    desc.includes('blocking');
+
+  const hasMinorKeywords =
+    desc.includes('minor') ||
+    desc.includes('hairline') ||
+    desc.includes('small') ||
+    desc.includes('slight') ||
+    desc.includes('superficial') ||
+    desc.includes('cosmetic') ||
+    desc.includes('low risk') ||
+    desc.includes('early');
+
+  // Explicit Minor Override (Confidence alone must NEVER force High)
+  if (hasMinorKeywords && area < 0.04) {
+    return {
+      priority: 'LOW',
+      reason: 'Low: Minor defect reported with limited immediate safety risk to road users',
+    };
+  }
+
+  // Potholes: High urgency vehicular & two-wheeler safety hazard
+  if (normType === 'pothole') {
+    if (area >= 0.08 || hasUrgentHazard || detectionCount > 2) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Deep or large pothole crater creating an immediate vehicular/two-wheeler accident hazard',
+      };
+    }
+    if (area >= 0.02 || desc.includes('repair') || detectionCount > 1) {
+      return {
+        priority: 'MEDIUM',
+        reason: 'Medium: Moderate pothole affecting road surface smoothness, requiring municipal asphalt repair',
+      };
+    }
+    return {
+      priority: 'LOW',
+      reason: 'Low: Shallow surface pothole with low immediate accident risk',
+    };
   }
 
   // Alligator Cracking: Structural base failure
-  if (issueType === 'alligator cracking') {
-    if (confidence >= 0.50 || area >= 0.10 || detectionCount > 2) return 'HIGH';
-    if (confidence >= 0.32 || area >= 0.04) return 'MEDIUM';
-    return 'LOW';
+  if (normType === 'alligator cracking') {
+    if (area >= 0.10 || hasUrgentHazard || detectionCount > 2) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Severe interconnected alligator cracking indicating structural road base failure',
+      };
+    }
+    if (area >= 0.03 || desc.includes('spread') || desc.includes('growing') || !hasMinorKeywords) {
+      return {
+        priority: 'MEDIUM',
+        reason: 'Medium: Moderate fatigue cracking requiring scheduled surface re-laying',
+      };
+    }
+    return {
+      priority: 'LOW',
+      reason: 'Low: Initial alligator cracking pattern with low immediate traffic hazard',
+    };
   }
 
   // Cracking: Longitudinal and Transverse cracks
-  if (issueType === 'cracking') {
-    if (confidence >= 0.65 || area >= 0.12 || detectionCount > 3) return 'HIGH';
-    if (confidence >= 0.38 || area >= 0.04 || detectionCount > 1) return 'MEDIUM';
-    return 'LOW';
+  if (normType === 'cracking' || normType === 'road cracking' || normType === 'road surface cracking') {
+    if (area >= 0.12 || hasUrgentHazard || detectionCount > 3) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Extensive pavement fissures spreading across the active vehicular carriageway',
+      };
+    }
+    if (area >= 0.03 || desc.includes('long') || detectionCount > 1) {
+      return {
+        priority: 'MEDIUM',
+        reason: 'Medium: Longitudinal/transverse road surface cracks requiring crack sealing',
+      };
+    }
+    return {
+      priority: 'LOW',
+      reason: 'Low: Minor hairline road surface cracking with minimal structural risk',
+    };
   }
 
-  // Road Divider / Median Damage: Major vehicular collision hazard
-  if (issueType === 'road divider damage') {
-    if (confidence >= 0.40 || area >= 0.06 || detectionCount > 1) return 'HIGH';
-    return 'MEDIUM';
+  // Road Divider / Median Damage: Major collision hazard
+  if (normType.includes('divider') || normType.includes('median')) {
+    if (hasUrgentHazard || area >= 0.06 || desc.includes('broken pieces') || desc.includes('road')) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Fractured road divider with debris or broken concrete posing direct vehicular collision hazard',
+      };
+    }
+    return {
+      priority: 'MEDIUM',
+      reason: 'Medium: Damaged road divider structure requiring civil maintenance',
+    };
   }
 
-  // Street Light Fault: Night vision & accident risk
-  if (issueType === 'street light fault') {
-    if (confidence >= 0.45) return 'HIGH';
-    return 'MEDIUM';
+  // Manhole Defect: Severe falling & vehicle inversion hazard
+  if (normType.includes('manhole')) {
+    return {
+      priority: 'HIGH',
+      reason: 'High: Damaged, displaced, or missing manhole cover creating immediate catastrophic fall/inversion hazard',
+    };
   }
 
-  // Manhole Defect: Severe pedestrian / two-wheeler life hazard
-  if (issueType === 'manhole defect') {
-    return 'HIGH';
+  // Waterlogging: Hydroplaning & base erosion
+  if (normType.includes('waterlog') || normType.includes('flood')) {
+    if (hasUrgentHazard || area >= 0.10 || desc.includes('stagnant') || desc.includes('submerged')) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Deep stagnant waterlogging across carriageway causing hydroplaning risk and major traffic obstruction',
+      };
+    }
+    return {
+      priority: 'MEDIUM',
+      reason: 'Medium: Water accumulation on road margin affecting traffic usability',
+    };
   }
 
-  // Waterlogging / Road Flooding: Hydroplaning & road base erosion
-  if (issueType === 'waterlogging') {
-    if (confidence >= 0.45 || area >= 0.10) return 'HIGH';
-    return 'MEDIUM';
+  // Street Light Fault: Night vision & collision hazard
+  if (normType.includes('street light') || normType.includes('streetlight') || normType.includes('lighting')) {
+    if (hasUrgentHazard || desc.includes('junction') || desc.includes('intersection') || desc.includes('pitch dark')) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Streetlight outage at major junction/curve causing severe nighttime collision hazard',
+      };
+    }
+    return {
+      priority: 'MEDIUM',
+      reason: 'Medium: Non-functional streetlight fixture requiring electrical maintenance',
+    };
   }
 
-  // Debris / Road Blockage: Sudden obstacle on carriageway
-  if (issueType === 'debris / road blockage') {
-    if (confidence >= 0.50 || area >= 0.08) return 'HIGH';
-    return 'MEDIUM';
+  // Debris / Road Blockage: Immediate road obstacle
+  if (normType.includes('debris') || normType.includes('blockage') || normType.includes('obstacle')) {
+    if (hasUrgentHazard || area >= 0.08 || desc.includes('blocking')) {
+      return {
+        priority: 'HIGH',
+        reason: 'High: Heavy debris or construction waste actively obstructing traffic movement',
+      };
+    }
+    return {
+      priority: 'MEDIUM',
+      reason: 'Medium: Roadside debris accumulation requiring solid waste clearance',
+    };
   }
 
-  // Damaged Traffic Sign / Missing Signage
-  if (issueType === 'damaged traffic sign' || issueType === 'missing signage') {
-    if (confidence >= 0.50) return 'MEDIUM';
-    return 'LOW';
+  // Damaged Traffic Sign: Regulatory guidance
+  if (normType.includes('sign') || normType.includes('signage')) {
+    if (desc.includes('stop') || desc.includes('speed') || desc.includes('school') || desc.includes('blind')) {
+      return {
+        priority: 'MEDIUM',
+        reason: 'Medium: Critical regulatory/warning traffic sign damaged or missing',
+      };
+    }
+    return {
+      priority: 'LOW',
+      reason: 'Low: Information/direction sign damaged with low immediate safety risk',
+    };
   }
 
-  // Damaged Footpath: Pedestrian trip hazard
-  if (issueType === 'damaged footpath') {
-    if (confidence >= 0.50 || area >= 0.10) return 'MEDIUM';
-    return 'LOW';
+  // Damaged Footpath: Pedestrian safety
+  if (normType.includes('footpath') || normType.includes('walkway') || normType.includes('pavement')) {
+    if (hasUrgentHazard || desc.includes('elderly') || desc.includes('trip') || desc.includes('fall')) {
+      return {
+        priority: 'MEDIUM',
+        reason: 'Medium: Broken footpath slabs posing pedestrian trip and injury risk',
+      };
+    }
+    return {
+      priority: 'LOW',
+      reason: 'Low: Minor footpath surface wear without open holes',
+    };
   }
 
-  return 'LOW';
+  return {
+    priority: hasUrgentHazard ? 'HIGH' : 'LOW',
+    reason: hasUrgentHazard
+      ? 'High: Reported hazard context indicates urgent municipal attention required'
+      : 'Low: Civic infrastructure defect with low immediate public safety hazard',
+  };
+}
+
+export function calculatePriority(
+  issueType: DetectedIssueType | string,
+  confidence: number,
+  boundingBox?: { width: number; height: number },
+  detectionCount = 1,
+  description?: string
+): Priority {
+  return calculatePriorityWithExplanation(issueType, confidence, boundingBox, detectionCount, description).priority;
 }
 
 // Map ONNX model class IDs to issue type strings (10-Class Target Taxonomy)
@@ -148,17 +304,17 @@ export const ISSUE_DEPARTMENT: Record<DetectedIssueType, { name: string; code: s
     secondary: 'TANGEDCO & CCMC Street Lighting Wing',
   },
   'manhole defect': {
-    name: 'Water Supply & Drainage Department',
-    code: 'TWAD',
+    name: 'Sewerage',
+    code: 'SEWER',
     secondary: 'Underground Drainage (UGD) Division',
   },
   'waterlogging': {
-    name: 'Water Supply & Drainage Department',
-    code: 'TWAD',
+    name: 'Stormwater / Drainage',
+    code: 'DRAIN',
     secondary: 'Stormwater Drainage & Flood Control',
   },
   'debris / road blockage': {
-    name: 'Solid Waste Management Department',
+    name: 'Solid Waste Management',
     code: 'SWM',
     secondary: 'Health & Sanitation Wing',
   },
@@ -229,8 +385,8 @@ export const VISIBLE_ISSUES_METADATA: VisibleIssueMetadata[] = [
     id: 'manhole defect',
     title: 'Damaged / Open Manhole Chamber',
     category: 'Sub-surface Utility Hazard',
-    department: 'Water Supply & Drainage Department',
-    departmentCode: 'TWAD',
+    department: 'Sewerage',
+    departmentCode: 'SEWER',
     defaultPriority: 'HIGH',
     description: 'Missing, broken, or sunken drainage/sewer manhole lid directly in travel lane.',
     detectionFeatures: ['Circular/square frame gap', 'Cracked iron lid', 'Deep hazardous utility void'],
@@ -239,8 +395,8 @@ export const VISIBLE_ISSUES_METADATA: VisibleIssueMetadata[] = [
     id: 'waterlogging',
     title: 'Waterlogging & Road Flooding',
     category: 'Drainage & Hydrology',
-    department: 'Water Supply & Drainage Department',
-    departmentCode: 'TWAD',
+    department: 'Stormwater / Drainage',
+    departmentCode: 'DRAIN',
     defaultPriority: 'HIGH',
     description: 'Stagnant rainwater pool obstructing vehicular lanes due to choked catchpits.',
     detectionFeatures: ['Surface water reflections', 'Submerged road markings', 'Silt accumulation'],

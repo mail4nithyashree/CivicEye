@@ -1,5 +1,6 @@
 import ComplaintCard from '@/components/ComplaintCard';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { auth } from '@/firebaseConfig';
 import { subscribeToUserComplaints, type Complaint } from '@/services/complaintService';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function MyComplaintsScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const [user, setUser] = useState<User | null>(auth.currentUser);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,43 +75,43 @@ export default function MyComplaintsScreen() {
   const keyExtractor = useCallback((item: Complaint) => item.id, []);
 
   const ListHeader = useCallback(() => (
-    <Text style={styles.count}>
+    <Text style={[styles.count, { color: colors.textOnDarkSecondary }]}>
       {complaints.length} complaint{complaints.length !== 1 ? 's' : ''} submitted
     </Text>
-  ), [complaints.length]);
+  ), [complaints.length, colors.textOnDarkSecondary]);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Complaints</Text>
+        <Text style={[styles.headerTitle, { color: colors.textOnDark }]}>My Complaints</Text>
         <View style={{ width: 24 }} />
       </View>
 
       {loading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={AppColors.primary} />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : error ? (
         <View style={styles.centered}>
-          <Ionicons name="cloud-offline-outline" size={48} color={AppColors.placeholder} />
-          <Text style={styles.errorText}>{error}</Text>
+          <Ionicons name="cloud-offline-outline" size={48} color={colors.disabled} />
+          <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>
         </View>
       ) : complaints.length === 0 ? (
         <View style={styles.centered}>
-          <Ionicons name="document-text-outline" size={64} color={AppColors.placeholder} />
-          <Text style={styles.emptyTitle}>No Complaints Yet</Text>
-          <Text style={styles.emptySubtitle}>You haven&apos;t submitted any complaints.</Text>
+          <Ionicons name="document-text-outline" size={64} color={colors.disabled} />
+          <Text style={[styles.emptyTitle, { color: colors.textOnDark }]}>No Complaints Yet</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textOnDarkSecondary }]}>You haven&apos;t submitted any complaints.</Text>
           <TouchableOpacity
-            style={styles.primaryBtn}
+            style={[styles.primaryBtn, { backgroundColor: colors.buttonPrimary }]}
             onPress={() => router.push('/report')}
             accessible
             accessibilityRole="button"
             accessibilityLabel="Report your first issue"
           >
-            <Text style={styles.primaryBtnText}>Report Your First Issue</Text>
+            <Text style={[styles.primaryBtnText, { color: colors.buttonText }]}>Report Your First Issue</Text>
           </TouchableOpacity>
         </View>
       ) : (

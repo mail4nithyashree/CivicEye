@@ -27,7 +27,7 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
   'alligator cracking':      { name: 'Road Maintenance', code: 'ROAD' },
   'cracking':                { name: 'Road Maintenance', code: 'ROAD' },
   'pothole':                 { name: 'Road Maintenance', code: 'ROAD' },
-  'manhole defect':          { name: 'Stormwater / Drainage', code: 'DRAIN' },
+  'manhole defect':          { name: 'Sewerage', code: 'SEWER' },
   'waterlogging':            { name: 'Stormwater / Drainage', code: 'DRAIN' },
   'road divider damage':     { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
   'damaged traffic sign':    { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
@@ -37,6 +37,15 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
 
   // General & Legacy Variations
   'Pothole':                 { name: 'Road Maintenance', code: 'ROAD' },
+  'Alligator Cracking':      { name: 'Road Maintenance', code: 'ROAD' },
+  'Road Cracking':           { name: 'Road Maintenance', code: 'ROAD' },
+  'Road Divider Damage':     { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
+  'Damaged Traffic Sign':    { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
+  'Streetlight Fault':       { name: 'Street Lighting Department', code: 'LIGHTING' },
+  'Damaged Manhole':         { name: 'Sewerage', code: 'SEWER' },
+  'Damaged Footpath':        { name: 'Public Works Department', code: 'PWD' },
+  'Road Debris / Obstruction': { name: 'Solid Waste Management', code: 'SWM' },
+  'Road Surface Defect':     { name: 'Road Maintenance', code: 'ROAD' },
   'Damaged Road':            { name: 'Road Maintenance', code: 'ROAD' },
   'Road Issue':              { name: 'Road Maintenance', code: 'ROAD' },
   'Garbage Overflow':        { name: 'Solid Waste Management', code: 'SWM' },
@@ -69,7 +78,6 @@ export const ISSUE_DEPARTMENT_MAP: Record<string, DepartmentInfo> = {
   'Overgrown Vegetation':    { name: 'Tree / Greenery Maintenance', code: 'TREES' },
   'Damaged Infrastructure':  { name: 'Road Maintenance', code: 'ROAD' },
   'Public Route Issue':      { name: 'Public Works Department', code: 'PWD' },
-  'Damaged Footpath':        { name: 'Public Works Department', code: 'PWD' },
   'Public Works Defect':     { name: 'Public Works Department', code: 'PWD' },
   'Public Corridor Defect':  { name: 'Public Works Department', code: 'PWD' },
   'missing signage':         { name: 'Traffic / Road Safety Department', code: 'SAFETY' },
@@ -129,9 +137,22 @@ export function getDefaultIssueTypeForDepartment(deptCode: string, matchedKeywor
       if (kw.includes('maintenance') || kw.includes('clean')) return 'Park Maintenance';
       if (kw.includes('bench') || kw.includes('fence') || kw.includes('gate') || kw.includes('damage') || kw.includes('broken')) return 'Park Damage';
       return 'Park Issue';
+    case 'SAFETY':
+      if (kw.includes('divider') || kw.includes('median') || kw.includes('barrier')) return 'Road Divider Damage';
+      if (kw.includes('sign') || kw.includes('board') || kw.includes('signal')) return 'Damaged Traffic Sign';
+      return 'Road Divider Damage';
+    case 'LIGHTING':
+      return 'Streetlight Fault';
+    case 'PWD':
+      if (kw.includes('footpath') || kw.includes('walkway') || kw.includes('sidewalk') || kw.includes('pavement')) return 'Damaged Footpath';
+      return 'Damaged Footpath';
     case 'ROAD':
     default:
-      return 'Road Issue';
+      if (kw.includes('pothole') || kw.includes('crater') || kw.includes('hole')) return 'Pothole';
+      if (kw.includes('alligator') || kw.includes('crocodile') || kw.includes('spider')) return 'Alligator Cracking';
+      if (kw.includes('crack') || kw.includes('fissure') || kw.includes('split')) return 'Road Cracking';
+      if (kw.includes('manhole') || kw.includes('drain cover')) return 'Damaged Manhole';
+      return 'Road Surface Defect';
   }
 }
 

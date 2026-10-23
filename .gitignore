@@ -61,3 +61,15 @@ app-example
 # generated native folders
 /ios
 /android
+
+# PyTorch weights & experimental runs
+*.pt
+*.cache
+runs/
+experiments/
+
+# Backups and database dumps containing user data
+backups/
+*.backup.json
+
+

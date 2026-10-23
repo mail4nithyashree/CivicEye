@@ -6,6 +6,7 @@ import {
   type PracticalBudgetItem,
 } from '@/constants/coimbatoreRoads';
 import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -31,6 +32,7 @@ export default function PracticalBudgetBreakdownCard({
   initiallyExpanded = false,
 }: Props) {
   const [expandedBoq, setExpandedBoq] = useState(initiallyExpanded);
+  const { colors, isDark } = useAppTheme();
 
   // Compute 4-pillar budget allocation dynamically or use provided breakdown
   const details: PracticalBudgetDetails = useMemo(() => {
@@ -48,93 +50,93 @@ export default function PracticalBudgetBreakdownCard({
   const totalAmount = estimatedBudget ?? details.budget;
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isDark && { backgroundColor: colors.card, borderColor: colors.borderLight }]}>
       {/* Header with Title and Total */}
       <View style={styles.headerRow}>
-        <View style={styles.headerIconWrap}>
-          <Ionicons name="calculator-outline" size={20} color="#0D9488" />
+        <View style={[styles.headerIconWrap, isDark && { backgroundColor: colors.surfaceElevated }]}>
+          <Ionicons name="calculator-outline" size={20} color={isDark ? colors.buttonPrimary : '#0D9488'} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.cardTitle}>{title}</Text>
-          <Text style={styles.totalValue}>₹{totalAmount.toLocaleString('en-IN')}</Text>
+          <Text style={[styles.cardTitle, isDark && { color: colors.textSecondary }]}>{title}</Text>
+          <Text style={[styles.totalValue, isDark && { color: colors.textPrimary }]}>₹{totalAmount.toLocaleString('en-IN')}</Text>
         </View>
-        <View style={styles.inrBadge}>
-          <Text style={styles.inrBadgeText}>4-Pillar Municipal Split</Text>
+        <View style={[styles.inrBadge, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.inputBorder }]}>
+          <Text style={[styles.inrBadgeText, isDark && { color: colors.textPrimary }]}>4-Pillar Municipal Split</Text>
         </View>
       </View>
 
       {/* Scope / Description Summary */}
-      <Text style={styles.scopeDesc}>
+      <Text style={[styles.scopeDesc, isDark && { color: colors.textSecondary }]}>
         {estimatedBudgetDesc || details.description}
       </Text>
 
       {/* Defect Physical Dimensions & Damage Extent */}
       {details.defectDimensions ? (
-        <View style={styles.dimBox}>
+        <View style={[styles.dimBox, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
           <View style={styles.dimHeaderRow}>
-            <Ionicons name="resize-outline" size={14} color="#0284C7" />
-            <Text style={styles.dimTitle}>Defect Dimensions &amp; Damage Extent</Text>
+            <Ionicons name="resize-outline" size={14} color={isDark ? colors.buttonPrimary : '#0284C7'} />
+            <Text style={[styles.dimTitle, isDark && { color: colors.textSecondary }]}>Defect Dimensions &amp; Damage Extent</Text>
           </View>
-          <Text style={styles.dimText}>{details.defectDimensions}</Text>
+          <Text style={[styles.dimText, isDark && { color: colors.textPrimary }]}>{details.defectDimensions}</Text>
         </View>
       ) : null}
 
       {/* 4-Pillar Practical Allocation: Materials (45%), Labour (30%), Safety & Machinery (15%), Overhead (10%) */}
       <View style={styles.pillarGrid}>
         {/* Pillar 1: Materials (45%) */}
-        <View style={styles.pillarCard}>
+        <View style={[styles.pillarCard, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
           <View style={styles.pillarHeader}>
             <Ionicons name="cube-outline" size={13} color="#0D9488" />
             <Text style={[styles.pillarTitle, { color: '#0D9488' }]}>Material Cost</Text>
           </View>
           <Text style={styles.pillarPercent}>45% Split</Text>
-          <Text style={styles.pillarCost}>₹{details.materialCost.toLocaleString('en-IN')}</Text>
-          <Text style={styles.pillarSub}>BOQ Raw Materials</Text>
-          <Text style={styles.pillarWage}>IRC / MoRTH specs</Text>
+          <Text style={[styles.pillarCost, isDark && { color: colors.textPrimary }]}>₹{details.materialCost.toLocaleString('en-IN')}</Text>
+          <Text style={[styles.pillarSub, isDark && { color: colors.textSecondary }]}>BOQ Raw Materials</Text>
+          <Text style={[styles.pillarWage, isDark && { color: colors.textSecondary }]}>IRC / MoRTH specs</Text>
         </View>
 
         {/* Pillar 2: Labour (30%) */}
-        <View style={styles.pillarCard}>
+        <View style={[styles.pillarCard, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
           <View style={styles.pillarHeader}>
             <Ionicons name="people-outline" size={13} color="#4F46E5" />
             <Text style={[styles.pillarTitle, { color: '#4F46E5' }]}>Labour Charge</Text>
           </View>
           <Text style={[styles.pillarPercent, { color: '#4F46E5' }]}>30% Split</Text>
-          <Text style={styles.pillarCost}>₹{details.laborCost.toLocaleString('en-IN')}</Text>
-          <Text style={styles.pillarSub}>
+          <Text style={[styles.pillarCost, isDark && { color: colors.textPrimary }]}>₹{details.laborCost.toLocaleString('en-IN')}</Text>
+          <Text style={[styles.pillarSub, isDark && { color: colors.textSecondary }]}>
             {details.workersCount} workers × {details.estimatedDays} {details.estimatedDays === 1 ? 'day' : 'days'}
           </Text>
-          <Text style={styles.pillarWage}>@ ₹{details.dailyWagePerWorker || 850}/day</Text>
+          <Text style={[styles.pillarWage, isDark && { color: colors.textSecondary }]}>@ ₹{details.dailyWagePerWorker || 850}/day</Text>
         </View>
 
         {/* Pillar 3: Safety & Machinery (15%) */}
-        <View style={styles.pillarCard}>
+        <View style={[styles.pillarCard, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
           <View style={styles.pillarHeader}>
             <Ionicons name="construct-outline" size={13} color="#D97706" />
             <Text style={[styles.pillarTitle, { color: '#D97706' }]}>Machinery &amp; Safety</Text>
           </View>
           <Text style={[styles.pillarPercent, { color: '#D97706' }]}>15% Split</Text>
-          <Text style={styles.pillarCost}>₹{details.machineryCost.toLocaleString('en-IN')}</Text>
-          <Text style={styles.pillarSub}>Equipment Rental</Text>
-          <Text style={styles.pillarWage}>Compactor/Saw/Mixer</Text>
+          <Text style={[styles.pillarCost, isDark && { color: colors.textPrimary }]}>₹{details.machineryCost.toLocaleString('en-IN')}</Text>
+          <Text style={[styles.pillarSub, isDark && { color: colors.textSecondary }]}>Equipment Rental</Text>
+          <Text style={[styles.pillarWage, isDark && { color: colors.textSecondary }]}>Compactor/Saw/Mixer</Text>
         </View>
 
         {/* Pillar 4: Overhead & Safety Expenses (10%) */}
-        <View style={styles.pillarCard}>
+        <View style={[styles.pillarCard, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
           <View style={styles.pillarHeader}>
             <Ionicons name="shield-checkmark-outline" size={13} color="#E11D48" />
             <Text style={[styles.pillarTitle, { color: '#E11D48' }]}>Overhead Expenses</Text>
           </View>
           <Text style={[styles.pillarPercent, { color: '#E11D48' }]}>10% Split</Text>
-          <Text style={styles.pillarCost}>₹{details.overheadCost.toLocaleString('en-IN')}</Text>
-          <Text style={styles.pillarSub}>Safety &amp; Logistics</Text>
-          <Text style={styles.pillarWage}>Traffic Safety &amp; Sign-off</Text>
+          <Text style={[styles.pillarCost, isDark && { color: colors.textPrimary }]}>₹{details.overheadCost.toLocaleString('en-IN')}</Text>
+          <Text style={[styles.pillarSub, isDark && { color: colors.textSecondary }]}>Safety &amp; Logistics</Text>
+          <Text style={[styles.pillarWage, isDark && { color: colors.textSecondary }]}>Traffic Safety &amp; Sign-off</Text>
         </View>
       </View>
 
       {/* Bill of Quantities (BOQ) Itemized Table Toggle */}
       {showBoqToggle && details.breakdown && details.breakdown.length > 0 && (
-        <View style={styles.boqSection}>
+        <View style={[styles.boqSection, isDark && { borderTopColor: colors.borderLight }]}>
           <TouchableOpacity
             style={styles.boqToggleBtn}
             onPress={() => setExpandedBoq(!expandedBoq)}
@@ -144,25 +146,25 @@ export default function PracticalBudgetBreakdownCard({
             accessibilityLabel="Toggle Bill of Quantities Details"
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="receipt-outline" size={15} color={AppColors.primary} />
-              <Text style={styles.boqToggleText}>
+              <Ionicons name="receipt-outline" size={15} color={isDark ? colors.buttonPrimary : AppColors.primary} />
+              <Text style={[styles.boqToggleText, isDark && { color: colors.buttonPrimary }]}>
                 {expandedBoq ? 'Hide Itemized Bill of Quantities (BOQ)' : 'View Itemized Bill of Quantities (BOQ)'}
               </Text>
             </View>
             <Ionicons
               name={expandedBoq ? 'chevron-up' : 'chevron-down'}
               size={18}
-              color={AppColors.primary}
+              color={isDark ? colors.buttonPrimary : AppColors.primary}
             />
           </TouchableOpacity>
 
           {expandedBoq && (
-            <View style={styles.boqTable}>
-              <View style={styles.boqHeaderRow}>
-                <Text style={[styles.boqColHeader, { flex: 2 }]}>Item / Resource</Text>
-                <Text style={[styles.boqColHeader, { flex: 1, textAlign: 'center' }]}>Qty</Text>
-                <Text style={[styles.boqColHeader, { flex: 1, textAlign: 'right' }]}>Rate (₹)</Text>
-                <Text style={[styles.boqColHeader, { flex: 1.2, textAlign: 'right' }]}>Total (₹)</Text>
+            <View style={[styles.boqTable, isDark && { backgroundColor: colors.surfaceElevated, borderColor: colors.borderLight }]}>
+              <View style={[styles.boqHeaderRow, isDark && { backgroundColor: colors.inputBg, borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.boqColHeader, { flex: 2 }, isDark && { color: colors.textSecondary }]}>Item / Resource</Text>
+                <Text style={[styles.boqColHeader, { flex: 1, textAlign: 'center' }, isDark && { color: colors.textSecondary }]}>Qty</Text>
+                <Text style={[styles.boqColHeader, { flex: 1, textAlign: 'right' }, isDark && { color: colors.textSecondary }]}>Rate (₹)</Text>
+                <Text style={[styles.boqColHeader, { flex: 1.2, textAlign: 'right' }, isDark && { color: colors.textSecondary }]}>Total (₹)</Text>
               </View>
 
               {details.breakdown.map((item: PracticalBudgetItem, idx: number) => {
@@ -176,29 +178,29 @@ export default function PracticalBudgetBreakdownCard({
                     : '#E11D48';
 
                 return (
-                  <View key={idx} style={[styles.boqRow, idx % 2 === 1 && styles.boqRowAlt]}>
+                  <View key={idx} style={[styles.boqRow, isDark && { borderBottomColor: colors.borderLight }, idx % 2 === 1 && (isDark ? { backgroundColor: colors.inputBg } : styles.boqRowAlt)]}>
                     <View style={{ flex: 2 }}>
-                      <Text style={styles.boqItemName}>{item.item}</Text>
+                      <Text style={[styles.boqItemName, isDark && { color: colors.textPrimary }]}>{item.item}</Text>
                       <Text style={[styles.boqItemCategory, { color: categoryColor }]}>
                         {item.category.toUpperCase()}
                       </Text>
                     </View>
-                    <Text style={[styles.boqColText, { flex: 1, textAlign: 'center' }]}>
+                    <Text style={[styles.boqColText, { flex: 1, textAlign: 'center' }, isDark && { color: colors.textSecondary }]}>
                       {item.quantity}
                     </Text>
-                    <Text style={[styles.boqColText, { flex: 1, textAlign: 'right' }]}>
+                    <Text style={[styles.boqColText, { flex: 1, textAlign: 'right' }, isDark && { color: colors.textSecondary }]}>
                       ₹{item.unitCost.toLocaleString('en-IN')}
                     </Text>
-                    <Text style={[styles.boqColTotal, { flex: 1.2, textAlign: 'right' }]}>
+                    <Text style={[styles.boqColTotal, { flex: 1.2, textAlign: 'right' }, isDark && { color: colors.textPrimary }]}>
                       ₹{item.totalCost.toLocaleString('en-IN')}
                     </Text>
                   </View>
                 );
               })}
 
-              <View style={styles.boqFooterRow}>
-                <Text style={styles.boqFooterLabel}>Total Practical Estimate:</Text>
-                <Text style={styles.boqFooterTotal}>₹{totalAmount.toLocaleString('en-IN')}</Text>
+              <View style={[styles.boqFooterRow, isDark && { backgroundColor: colors.inputBg, borderTopColor: colors.borderLight }]}>
+                <Text style={[styles.boqFooterLabel, isDark && { color: colors.textPrimary }]}>Total Practical Estimate:</Text>
+                <Text style={[styles.boqFooterTotal, isDark && { color: colors.textPrimary }]}>₹{totalAmount.toLocaleString('en-IN')}</Text>
               </View>
             </View>
           )}

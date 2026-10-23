@@ -1,109 +1,48 @@
-import StatusBadge from '@/components/StatusBadge';
-import PracticalBudgetBreakdownCard from '@/components/PracticalBudgetBreakdownCard';
-import CivicImage from '@/components/CivicImage';
-import { getStandardEstimatedBudget } from '@/constants/coimbatoreRoads';
-import { AppColors } from '@/constants/colors';
-import {
-  subscribeToComplaint,
-  type Complaint,
-  type ComplaintStatus,
-} from '@/services/complaintService';
-import { isRoadDepartment } from '@/services/departmentMapping';
-import { formatResolutionDate } from '@/services/resolutionDuration';
-import { getResponsibleOfficerName } from '@/services/officerService';
-import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import StatusBadge from '@/components/StatusBadge';
+import PracticalBudgetBreakdownCard from '@/components/PracticalBudgetBreakdownCard';
+import CivicImage from '@/components/CivicImage';
+import GradientCard from '@/components/GradientCard';
+import { AppColors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
+import { auth } from '@/firebaseConfig';
+import {
+  subscribeToComplaint,
+  deleteComplaintByCitizen,
+  respondToClarificationByCitizen,
+  type Complaint,
+  type StatusHistoryItem,
+} from '@/services/complaintService';
+import { formatResolutionDate } from '@/services/resolutionDuration';
+import { getResponsibleOfficerName } from '@/services/officerService';
+import { formatDisplayIssueName } from '@/services/predictionContract';
 
-const TIMELINE_STEPS: { key: ComplaintStatus; label: string; desc: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  {
-    key: 'Submitted',
-    label: 'Complaint Raised',
-    desc: 'Citizen registered complaint with AI defect analysis.',
-    icon: 'document-text-outline',
-  },
-  {
-    key: 'Pending Field Verification',
-    label: 'Field Verification',
-    desc: 'Queued for on-site physical inspection by Field Inspector.',
-    icon: 'shield-outline',
-  },
-  {
-    key: 'Verified',
-    label: 'Verified & Estimated',
-    desc: 'Inspector verified defect, severity, 1–7d estimate, budget & road authority.',
-    icon: 'checkmark-circle-outline',
-  },
-  {
-    key: 'Assigned',
-    label: 'Authority Assigned',
-    desc: 'Officially routed complaint to responsible maintenance department.',
-    icon: 'business-outline',
-  },
-  {
-    key: 'In Progress',
-    label: 'Repair In Progress',
-    desc: 'Maintenance crew and equipment deployed on-site.',
-    icon: 'construct-outline',
-  },
-  {
-    key: 'Resolved',
-    label: 'Work Resolved',
-    desc: 'Repair work completed and resolved by authority.',
-    icon: 'checkmark-done-circle',
-  },
-];
-
-function getTimelineIndex(status: ComplaintStatus): number {
-  switch (status) {
-    case 'Submitted':
-      return 0;
-    case 'Pending Field Verification':
-    case 'Under Review':
-      return 1;
-    case 'Verified':
-      return 2;
-    case 'Assigned':
-    case 'Accepted':
-      return 3;
-    case 'In Progress':
-      return 4;
-    case 'Resolved':
-    case 'Closed':
-      return 5;
-    case 'Rejected':
-    case 'Reopened':
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
-    </View>
-  );
-}
+type DetailTab = 'details' | 'status' | 'budget' | 'department';
 
 export default function ComplaintDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors, isDark } = useAppTheme();
+
+  const [activeTab, setActiveTab] = useState<DetailTab>('details');
   const [complaint, setComplaint] = useState<Complaint | null>(null);
   const [assignedOfficerName, setAssignedOfficerName] = useState<string>('Awaiting Assignment');
   const [loading, setLoading] = useState(true);
+  const [clarificationResponseText, setClarificationResponseText] = useState('');
+  const [submittingClarification, setSubmittingClarification] = useState(false);
 
   useEffect(() => {
     if (complaint?.department || complaint?.departmentCode) {
@@ -140,7 +79,7 @@ export default function ComplaintDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={AppColors.primary} />
       </SafeAreaView>
     );
@@ -148,9 +87,9 @@ export default function ComplaintDetailScreen() {
 
   if (!complaint) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="alert-circle-outline" size={48} color={AppColors.error} />
-        <Text style={styles.errorText}>Complaint not found.</Text>
+        <Text style={[styles.errorText, { color: colors.textPrimary }]}>Complaint not found.</Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>Go Back</Text>
         </TouchableOpacity>
@@ -158,582 +97,904 @@ export default function ComplaintDetailScreen() {
     );
   }
 
-  const isMismatchedRejection =
-    complaint.status === 'Invalid Issue image, raise the complaint with the appropriate image!' ||
-    complaint.status === 'Dissimilar Image to the Issue' ||
-    complaint.inspectionStatus === 'INVALID' ||
-    complaint.rejectionType === 'IMAGE_MISMATCH' ||
-    complaint.rejectionType === 'INVALID_IMAGE';
+  const isOwner = !!(auth.currentUser && complaint && auth.currentUser.uid === complaint.citizenId);
 
-  const isRoad = isRoadDepartment(complaint.department || complaint.responsibleDepartment) &&
-    !complaint.routingStatus?.startsWith('Moved') &&
-    !isMismatchedRejection;
-  const currentTimelineIndex = getTimelineIndex(complaint.status);
-  const isRejected = complaint.status === 'Rejected';
-  const isReopened = complaint.status === 'Reopened';
-  const isResolved = complaint.status === 'Resolved' || complaint.status === 'Closed';
-  const isMoved = !isRoad && !isMismatchedRejection && (!!complaint.routingStatus?.startsWith('Moved') || complaint.department !== 'Road Maintenance');
+  const handleDeleteComplaint = () => {
+    if (!complaint || !auth.currentUser) return;
+    Alert.alert(
+      'Delete Complaint?',
+      'Are you sure you want to delete this complaint? Deletion will remove it from active complaint views across all dashboards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteComplaintByCitizen(complaint.id, auth.currentUser!.uid);
+              Alert.alert('Complaint Deleted', 'Your complaint has been successfully removed.');
+              router.back();
+            } catch (err: any) {
+              Alert.alert('Deletion Failed', err?.message || 'Could not delete complaint.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
-  const dateStr = complaint.createdAt.toLocaleDateString('en-IN', {
+  const handleRespondClarification = async () => {
+    if (!complaint || !auth.currentUser || !clarificationResponseText.trim()) {
+      Alert.alert('Required', 'Please enter your clarification response before submitting.');
+      return;
+    }
+    setSubmittingClarification(true);
+    try {
+      await respondToClarificationByCitizen(
+        complaint.id,
+        auth.currentUser.uid,
+        clarificationResponseText.trim()
+      );
+      setClarificationResponseText('');
+      Alert.alert(
+        'Clarification Submitted',
+        'Thank you! Your response has been dispatched to the Field Inspector.'
+      );
+    } catch (err: any) {
+      Alert.alert('Submission Error', err?.message || 'Failed to submit clarification response.');
+    } finally {
+      setSubmittingClarification(false);
+    }
+  };
+
+  const formattedCreatedDate = complaint.createdAt.toLocaleString('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
   });
 
+  const canonicalIssueName = formatDisplayIssueName(complaint.displayIssueName || complaint.issueType);
+  const severityVal = (complaint.severity || complaint.priority || 'LOW').toUpperCase();
+  const departmentName = complaint.department || complaint.responsibleDepartment || 'Road Maintenance';
+
+  const hasBudgetInfo =
+    (typeof complaint.estimatedBudget === 'number' && complaint.estimatedBudget > 0) ||
+    (typeof complaint.inspectionDetails?.estimatedBudget === 'number' && complaint.inspectionDetails.estimatedBudget > 0);
+
+  const budgetAmount = complaint.estimatedBudget || complaint.inspectionDetails?.estimatedBudget || 0;
+
+  const hasDepartmentInfo = !!(
+    (complaint.department && complaint.department.trim() !== '') ||
+    (complaint.responsibleDepartment && complaint.responsibleDepartment.trim() !== '') ||
+    (complaint.departmentCode && complaint.departmentCode.trim() !== '')
+  );
+
   return (
-    <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={AppColors.textPrimary} />
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+      {/* 1. Header Bar */}
+      <View style={[styles.header, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={styles.backIconBtn}
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.textOnDark} />
         </TouchableOpacity>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerTitle}>#{complaint.complaintId}</Text>
-          <Text style={styles.headerSub}>{complaint.region} • Coimbatore</Text>
+          <Text style={[styles.headerTitle, { color: colors.textOnDark }]} numberOfLines={1}>
+            {complaint.complaintId}
+          </Text>
+          <Text style={[styles.headerSub, { color: colors.textOnDarkSecondary }]} numberOfLines={1}>
+            {complaint.region} • Coimbatore
+          </Text>
         </View>
-        <View style={{ width: 24 }} />
+        {isOwner ? (
+          <TouchableOpacity
+            onPress={handleDeleteComplaint}
+            style={styles.deleteHeaderBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Delete Complaint"
+          >
+            <Ionicons name="trash-outline" size={22} color="#DC2626" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Main Defect Image */}
-        <CivicImage
-          uri={complaint.imageUri}
-          issueType={complaint.issueType}
-          isInvalid={isMismatchedRejection}
-          invalidMessage="Invalid Image, give valid Issue Image!"
-          style={styles.image}
-          resizeMode="cover"
-        />
-
-        {/* Status Header Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.issueHeading}>
-                {isMismatchedRejection ? 'Invalid Image, give valid Issue Image!' : complaint.issueType}
-              </Text>
-              <Text style={styles.dateText}>Reported on {dateStr}</Text>
-            </View>
-            <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
-          </View>
-
-          {/* AI Model Detection Confidence & Extracted Keyword Badge (only for genuine issues) */}
-          {!isMismatchedRejection && typeof complaint.confidence === 'number' && complaint.confidence > 0 && (
-            <View style={styles.aiAccuracyRow}>
-              <View style={styles.aiAccuracyBadge}>
-                <Ionicons name="sparkles" size={12} color="#047857" />
-                <Text style={styles.aiAccuracyBadgeText}>
-                  AI Model Accuracy: {Math.round(complaint.confidence > 1 ? complaint.confidence : complaint.confidence * 100)}%
-                </Text>
-              </View>
-              {complaint.matchedKeyword ? (
-                <View style={styles.keywordChip}>
-                  <Ionicons name="pricetag-outline" size={11} color="#0369A1" />
-                  <Text style={styles.keywordChipText}>Keyword: &ldquo;{complaint.matchedKeyword}&rdquo;</Text>
-                </View>
-              ) : null}
-            </View>
-          )}
-
-          <Text style={styles.description}>{complaint.description}</Text>
-
-          {/* Location details */}
-          <View style={styles.locationChip}>
-            <Ionicons name="location-outline" size={14} color={AppColors.primary} />
-            <Text style={styles.locationText}>
-              {complaint.region} • GPS: {complaint.latitude.toFixed(5)}, {complaint.longitude.toFixed(5)}
+      {/* 2. Four Tab Navigation Bar in Exact Requested Order */}
+      <View style={[styles.tabBar, { backgroundColor: isDark ? colors.background : colors.surface, borderBottomColor: colors.border }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScrollContent}>
+          {/* Tab 1: Details (default) */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'details' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('details')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'details' }}
+          >
+            <Ionicons
+              name={activeTab === 'details' ? 'document-text' : 'document-text-outline'}
+              size={18}
+              color={activeTab === 'details' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'details' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'details' && styles.activeTabBtnText
+              ]}
+            >
+              Details
             </Text>
-          </View>
-        </View>
+          </TouchableOpacity>
 
-        {/* Mismatched Rejection Banner */}
-        {isMismatchedRejection && (
-          <View style={styles.mismatchBanner}>
-            <Ionicons name="ban" size={24} color="#DC2626" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.mismatchTitle}>Complaint Inactive: Invalid Image</Text>
-              <Text style={styles.mismatchText}>
-                {complaint.rejectionReason || 'Invalid Image, give valid Issue Image!'}
-              </Text>
-              <View style={styles.mismatchNoticeBox}>
-                <Ionicons name="information-circle-outline" size={14} color="#64748B" />
-                <Text style={styles.mismatchNoticeText}>
-                  This complaint is saved in your history as an inactive record. It is excluded from officer queues and action pipelines.
+          {/* Tab 2: Status */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'status' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('status')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'status' }}
+          >
+            <Ionicons
+              name={activeTab === 'status' ? 'time' : 'time-outline'}
+              size={18}
+              color={activeTab === 'status' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'status' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'status' && styles.activeTabBtnText
+              ]}
+            >
+              Status
+            </Text>
+          </TouchableOpacity>
+
+          {/* Tab 3: Budget */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'budget' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('budget')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'budget' }}
+          >
+            <Ionicons
+              name={activeTab === 'budget' ? 'cash' : 'cash-outline'}
+              size={18}
+              color={activeTab === 'budget' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'budget' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'budget' && styles.activeTabBtnText
+              ]}
+            >
+              Budget
+            </Text>
+          </TouchableOpacity>
+
+          {/* Tab 4: Department Details */}
+          <TouchableOpacity
+            style={[
+              styles.tabBtn,
+              activeTab === 'department' && [styles.activeTabBtn, { borderBottomColor: isDark ? '#B0E0E6' : colors.primary }]
+            ]}
+            onPress={() => setActiveTab('department')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'department' }}
+          >
+            <Ionicons
+              name={activeTab === 'department' ? 'business' : 'business-outline'}
+              size={18}
+              color={activeTab === 'department' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary)}
+            />
+            <Text
+              style={[
+                styles.tabBtnText,
+                { color: activeTab === 'department' ? (isDark ? '#B0E0E6' : colors.primary) : (isDark ? '#A2B7C4' : colors.textSecondary) },
+                activeTab === 'department' && styles.activeTabBtnText
+              ]}
+            >
+              Department Details
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+
+      {/* 3. Main Scrollable Tab Content Container */}
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* ========================================================================= */}
+        {/* TAB 1: DETAILS (Selected by Default)                                      */}
+        {/* ========================================================================= */}
+        {activeTab === 'details' && (
+          <View style={styles.tabContentContainer}>
+            {/* Uploaded Image */}
+            {complaint.imageUri ? (
+              <View style={[styles.imageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <CivicImage
+                  uri={complaint.imageUri}
+                  issueType={complaint.issueType}
+                  style={styles.image}
+                  resizeMode="cover"
+                />
+              </View>
+            ) : null}
+
+            {/* Title & Status Card */}
+            <GradientCard style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={[styles.issueHeading, { color: colors.textPrimary }]}>
+                    {canonicalIssueName}
+                  </Text>
+                  <Text style={[styles.reportedDateText, { color: colors.textSecondary }]}>
+                    Reported: {formattedCreatedDate}
+                  </Text>
+                </View>
+                <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
+              </View>
+            </GradientCard>
+
+            {/* Inspector Clarification Banner & Response Flow */}
+            {(complaint.status === 'Needs Clarification' || complaint.clarificationRequest) && (
+              <GradientCard style={[styles.card, { borderColor: '#F59E0B', borderWidth: 1.5 }]}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="help-circle-outline" size={22} color="#D97706" />
+                  <Text style={[styles.cardTitle, { color: '#D97706', flex: 1 }]}>
+                    Clarification Requested by Field Inspector
+                  </Text>
+                </View>
+
+                <View style={{ marginVertical: 8 }}>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
+                    Inspector Question:
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 20 }}>
+                    "{complaint.clarificationRequest}"
+                  </Text>
+                  {complaint.clarificationRequestedBy ? (
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                      Requested by {complaint.clarificationRequestedBy}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {complaint.citizenClarificationResponse ? (
+                  <View style={[styles.noticeBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F0FDF4', borderColor: '#BBF7D0', marginTop: 8 }]}>
+                    <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700', marginBottom: 2 }}>
+                      Your Submitted Response:
+                    </Text>
+                    <Text style={{ fontSize: 13, color: colors.textPrimary, lineHeight: 18 }}>
+                      {complaint.citizenClarificationResponse}
+                    </Text>
+                  </View>
+                ) : isOwner ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textPrimary, marginBottom: 6 }}>
+                      Respond to Inspector:
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: isDark ? colors.surface : '#FFFFFF',
+                        color: colors.textPrimary,
+                        borderColor: colors.border,
+                        borderWidth: 1,
+                        borderRadius: 8,
+                        padding: 10,
+                        fontSize: 13,
+                        minHeight: 70,
+                        textAlignVertical: 'top',
+                      }}
+                      placeholder="Provide additional details or landmark clarification..."
+                      placeholderTextColor={colors.textSecondary}
+                      multiline
+                      value={clarificationResponseText}
+                      onChangeText={setClarificationResponseText}
+                      editable={!submittingClarification}
+                    />
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#D97706',
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 8,
+                        marginTop: 10,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                      onPress={handleRespondClarification}
+                      disabled={submittingClarification}
+                    >
+                      {submittingClarification ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="send" size={15} color="#FFFFFF" />
+                          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                            Submit Clarification
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </GradientCard>
+            )}
+
+            {/* Inspector Closure Card */}
+            {complaint.status === 'Closed' && complaint.closureReason && (
+              <GradientCard style={[styles.card, { borderColor: '#10B981', borderWidth: 1.5 }]}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="checkmark-done-circle-outline" size={22} color="#059669" />
+                  <Text style={[styles.cardTitle, { color: '#059669', flex: 1 }]}>
+                    Complaint Closed: {complaint.closureOutcome || 'No Major Repair Required'}
+                  </Text>
+                </View>
+
+                <View style={{ marginVertical: 8 }}>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
+                    Inspection Findings / Closure Reason:
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 20 }}>
+                    "{complaint.closureReason}"
+                  </Text>
+                  {complaint.closedBy ? (
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                      Closed by Field Inspector {complaint.closedBy}
+                    </Text>
+                  ) : null}
+                </View>
+              </GradientCard>
+            )}
+
+            {/* Structured Complaint Details Card */}
+            <GradientCard style={styles.card}>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Complaint Overview</Text>
+
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Complaint ID</Text>
+                <Text style={[styles.rowValueHighlight, { color: AppColors.primary }]} selectable>
+                  {complaint.complaintId}
                 </Text>
               </View>
-            </View>
-          </View>
-        )}
 
-        {/* Department Involvement Notice if Secondary Department Involved */}
-        {(complaint.isOtherDeptInvolved || (complaint as any).otherDepartmentInvolvement) && complaint.involvedDepartments && complaint.involvedDepartments.length > 0 && (
-          <View style={styles.multiDeptBanner}>
-            <Ionicons name="git-network-outline" size={22} color="#92400E" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.multiDeptBannerTitle}>Department Involvement Notice</Text>
-              <Text style={styles.multiDeptBannerText}>
-                There is involvement of the {complaint.involvedDepartments.join(', ')} Department in your reported issue.
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {/* Department Routing Notice if Moved / Non-Road */}
-        {isMoved && (
-          <View style={styles.routingBannerCard}>
-            <View style={styles.routingBannerHeader}>
-              <Ionicons name="swap-horizontal" size={22} color="#0369A1" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routingBannerTitle}>
-                  Department: {complaint.department || complaint.responsibleDepartment}
-                </Text>
-                <Text style={styles.routingBannerMessage}>
-                  {complaint.routingMessage ||
-                    `Your complaint has been moved to the ${complaint.department || complaint.responsibleDepartment} Department.`}
-                </Text>
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Issue Name</Text>
+                <Text style={[styles.rowValue, { color: colors.textPrimary }]}>{canonicalIssueName}</Text>
               </View>
-            </View>
-            <View style={styles.routingMetaRow}>
-              <View style={styles.routingBadge}>
-                <Text style={styles.routingBadgeText}>
-                  Routing Status: {complaint.routingStatus || `Moved to ${complaint.department || complaint.responsibleDepartment}`}
-                </Text>
-              </View>
-              {complaint.originalDepartment && complaint.originalDepartment !== complaint.department ? (
-                <Text style={styles.routingOriginalText}>
-                  From: {complaint.originalDepartment}
-                </Text>
-              ) : null}
-            </View>
-          </View>
-        )}
 
-        {/* RESOLUTION DETAILS CARD (When Resolved) */}
-        {isResolved && (
-          <View style={styles.resolutionCard}>
-            <View style={styles.resolutionHeader}>
-              <Ionicons name="checkmark-circle" size={24} color={AppColors.success} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.resolutionTitle}>Complaint Resolved</Text>
-                <Text style={styles.resolutionSub}>
-                  This issue has been successfully repaired and resolved by the department.
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.resolutionInfoBox}>
-              <View style={styles.resolutionMetaRow}>
-                <Text style={styles.resolutionMetaLabel}>Status:</Text>
-                <View style={styles.resolvedStatusChip}>
-                  <Ionicons name="checkmark" size={12} color="#047857" />
-                  <Text style={styles.resolvedStatusChipText}>Resolved</Text>
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Severity / Priority</Text>
+                <View style={[styles.priorityPill, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.85)' : '#F1F5F9' }]}>
+                  <Text
+                    style={[
+                      styles.priorityPillText,
+                      severityVal === 'HIGH' ? { color: AppColors.error } :
+                      severityVal === 'MEDIUM' ? { color: '#C2410C' } : { color: AppColors.success }
+                    ]}
+                  >
+                    {severityVal}
+                  </Text>
                 </View>
               </View>
 
-              {complaint.resolutionDetails?.resolvedByName || complaint.assignedOfficerName ? (
-                <View style={styles.resolutionMetaRow}>
-                  <Text style={styles.resolutionMetaLabel}>Resolved By:</Text>
-                  <Text style={styles.resolutionMetaValue}>
-                    {complaint.resolutionDetails?.resolvedByName || complaint.assignedOfficerName || 'Maintenance Division'}
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Confidence Score</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={[styles.rowValue, { color: '#047857', fontWeight: '800' }]}>
+                    {complaint.confidence ?? 0}%
+                  </Text>
+                  <Text style={{ fontSize: 10, color: colors.textSecondary }}>
+                    (Description Heuristic)
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Assigned Department</Text>
+                <Text style={[styles.rowValue, { color: colors.textPrimary }]}>{departmentName}</Text>
+              </View>
+
+              <View style={styles.row}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Current Status</Text>
+                <Text style={[styles.rowValue, { color: AppColors.primary, fontWeight: '700' }]}>
+                  {complaint.status}
+                </Text>
+              </View>
+            </GradientCard>
+
+            {/* Submitted Description Card */}
+            <GradientCard style={styles.card}>
+              <View style={styles.cardHeaderFlex}>
+                <Ionicons name="chatbox-ellipses-outline" size={18} color={AppColors.primary} />
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Submitted Description</Text>
+              </View>
+              <Text style={[styles.descriptionText, { color: colors.textPrimary }]}>
+                {complaint.description && complaint.description.trim()
+                  ? complaint.description
+                  : 'No detailed description provided.'}
+              </Text>
+              {complaint.priorityReason ? (
+                <View style={[styles.noticeBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 17 }}>
+                    <Text style={{ fontWeight: '700', color: colors.textPrimary }}>Severity Note: </Text>
+                    {complaint.priorityReason}
                   </Text>
                 </View>
               ) : null}
+            </GradientCard>
 
-              {complaint.resolutionDetails?.resolvedAt && (
-                <View style={styles.resolutionMetaRow}>
-                  <Text style={styles.resolutionMetaLabel}>Resolved Date:</Text>
-                  <Text style={styles.resolutionMetaValue}>
-                    {complaint.resolutionDetails.resolvedAt instanceof Date
-                      ? complaint.resolutionDetails.resolvedAt.toLocaleDateString('en-IN', {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric',
-                        })
-                      : 'Completed'}
+            {/* Location & GPS Details Card */}
+            <GradientCard style={styles.card}>
+              <View style={styles.cardHeaderFlex}>
+                <Ionicons name="location-outline" size={18} color={AppColors.primary} />
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Location &amp; Coordinates</Text>
+              </View>
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Region / Ward</Text>
+                <Text style={[styles.rowValue, { color: colors.textPrimary }]}>{complaint.region}</Text>
+              </View>
+              <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Road / Area</Text>
+                <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                  {complaint.roadName || complaint.locationAddress || 'Coimbatore Sector'}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>GPS Coordinates</Text>
+                <Text style={[styles.rowValue, { color: colors.textPrimary, fontVariant: ['tabular-nums'] }]}>
+                  {complaint.latitude.toFixed(5)}, {complaint.longitude.toFixed(5)}
+                </Text>
+              </View>
+            </GradientCard>
+          </View>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB 2: STATUS                                                             */}
+        {/* ========================================================================= */}
+        {activeTab === 'status' && (
+          <View style={styles.tabContentContainer}>
+            {/* Current Status Banner */}
+            <GradientCard style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 2 }]}>
+                    Current Complaint Status
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    Real-time lifecycle tracking
+                  </Text>
+                </View>
+                <StatusBadge status={complaint.status} inspectionStatus={complaint.inspectionStatus} size="md" />
+              </View>
+
+              <View style={[styles.metaGrid, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F8FAFC', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                <View style={styles.metaCol}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Est. Resolution</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                    {complaint.estimatedResolutionDuration || '3 Days'}
+                  </Text>
+                </View>
+                <View style={[styles.metaCol, { borderLeftWidth: 1, borderLeftColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border, paddingLeft: 12 }]}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Expected Date</Text>
+                  <Text style={[styles.metaVal, { color: colors.textPrimary }]}>
+                    {complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Pending Schedule'}
+                  </Text>
+                </View>
+              </View>
+            </GradientCard>
+
+            {/* Status Timeline / History */}
+            <GradientCard style={styles.card}>
+              <View style={styles.cardHeaderFlex}>
+                <Ionicons name="list-outline" size={18} color={AppColors.primary} />
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Status Timeline</Text>
+              </View>
+
+              {complaint.statusHistory && complaint.statusHistory.length > 0 ? (
+                <View style={styles.timelineList}>
+                  {complaint.statusHistory.map((item: StatusHistoryItem, idx: number) => {
+                    const itemDate = item.timestamp instanceof Date ? item.timestamp : new Date(item.timestamp);
+                    const formattedItemTime = itemDate.toLocaleString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true,
+                    });
+                    const isLast = idx === (complaint.statusHistory?.length ?? 0) - 1;
+
+                    return (
+                      <View key={item.id || `hist-${idx}`} style={styles.timelineItemRow}>
+                        <View style={styles.timelineIndicatorCol}>
+                          <View style={[styles.timelineDot, { backgroundColor: isLast ? AppColors.primary : '#94A3B8' }]}>
+                            <Ionicons name="checkmark" size={10} color="#FFFFFF" />
+                          </View>
+                          {!isLast ? <View style={[styles.timelineLine, { backgroundColor: isDark ? '#94A3B8' : colors.border }]} /> : null}
+                        </View>
+                        <View style={styles.timelineContentCol}>
+                          <Text style={[styles.timelineStatusTitle, { color: colors.textPrimary }]}>
+                            {item.newStatus}
+                          </Text>
+                          <Text style={[styles.timelineDateText, { color: colors.textSecondary }]}>
+                            {formattedItemTime}
+                          </Text>
+                          {item.updatedByName ? (
+                            <Text style={[styles.timelineActorText, { color: colors.textSecondary }]}>
+                              Updated by: <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{item.updatedByName}</Text>
+                            </Text>
+                          ) : null}
+                          {item.remarks ? (
+                            <Text style={[styles.timelineRemarksText, { color: colors.textPrimary }]}>
+                              &ldquo;{item.remarks}&rdquo;
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={[styles.noticeBox, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Text style={[styles.noticeBoxText, { color: colors.textSecondary }]}>
+                    Complaint submitted. Awaiting initial field inspector verification.
                   </Text>
                 </View>
               )}
+            </GradientCard>
 
-              {complaint.resolutionDetails?.contractorName ? (
-                <View style={styles.resolutionMetaRow}>
-                  <Text style={styles.resolutionMetaLabel}>Contractor / Wing:</Text>
-                  <Text style={styles.resolutionMetaValue}>
-                    {complaint.resolutionDetails.contractorName}
-                  </Text>
+            {/* Field Inspector Verification Details */}
+            {(complaint.inspectionDetails || complaint.fieldVerifiedAt) && (
+              <GradientCard style={styles.card}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="shield-checkmark-outline" size={18} color="#059669" />
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Field Inspector Verification</Text>
                 </View>
-              ) : null}
 
-              {complaint.resolutionDetails?.resolutionRemarks ? (
-                <View style={styles.resolutionRemarksWrap}>
-                  <Text style={styles.resolutionMetaLabel}>Resolution Remarks:</Text>
-                  <Text style={styles.resolutionRemarksText}>
-                    {complaint.resolutionDetails.resolutionRemarks}
-                  </Text>
-                </View>
-              ) : null}
-
-              {complaint.resolutionDetails?.afterRepairImageUri ? (
-                <View style={styles.afterRepairWrap}>
-                  <Text style={styles.resolutionMetaLabel}>Repair Evidence Photo:</Text>
-                  <CivicImage
-                    uri={complaint.resolutionDetails.afterRepairImageUri}
-                    style={styles.afterRepairImage}
-                    resizeMode="cover"
-                  />
-                </View>
-              ) : null}
-            </View>
-          </View>
-        )}
-
-        {/* Rejection Alert Card if Rejected */}
-        {isRejected && (
-          <View style={styles.rejectedBanner}>
-            <Ionicons name="alert-circle" size={22} color={AppColors.error} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rejectedTitle}>Complaint Rejected during Inspection</Text>
-              <Text style={styles.rejectedText}>
-                {complaint.rejectionReason || 'Defect not found on-site or marked as invalid during field verification.'}
-              </Text>
-              {complaint.inspectorRemarks ? (
-                <Text style={[styles.rejectedText, { marginTop: 4, fontStyle: 'italic' }]}>
-                  Remarks: &ldquo;{complaint.inspectorRemarks}&rdquo;
-                </Text>
-              ) : null}
-            </View>
-          </View>
-        )}
-
-        {/* Reopen Banner if Reopened */}
-        {isReopened && (
-          <View style={styles.reopenedBanner}>
-            <Ionicons name="refresh-circle" size={22} color="#E11D48" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.reopenedTitle}>Complaint Reopened for Administrative Review</Text>
-              <Text style={styles.reopenedText}>
-                Complaint under administrative review for re-inspection.
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {/* Citizen Description & Landmark - High Visibility */}
-        {complaint.description ? (
-          <View style={styles.descCard}>
-            <View style={styles.descCardHeader}>
-              <Ionicons name="chatbox-ellipses" size={18} color={AppColors.primary} />
-              <Text style={styles.descCardTitle}>Citizen Description &amp; Landmark</Text>
-            </View>
-            <Text style={styles.descCardBody}>
-              {complaint.description}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Complaint Information Overview */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Complaint Information</Text>
-          <DetailRow label="Complaint ID" value={`#${complaint.complaintId}`} />
-          <DetailRow label="Issue Type" value={complaint.issueType} />
-          <DetailRow label="Priority" value={(complaint.priority || complaint.severity || 'LOW').toUpperCase()} />
-          <DetailRow label="Department" value={complaint.department || complaint.responsibleDepartment} />
-          <DetailRow
-            label="Assigned Officer"
-            value={complaint.assignedOfficerName || complaint.assignedOfficer || assignedOfficerName || 'Awaiting Assignment'}
-          />
-          <DetailRow
-            label="Estimated Resolution"
-            value={complaint.estimatedResolutionDuration || (complaint.estimatedResolutionDays ? `${complaint.estimatedResolutionDays} Days` : '3 Days')}
-          />
-          <DetailRow
-            label="Expected Resolution Date"
-            value={complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Pending Verification'}
-          />
-          {complaint.fieldVerificationStatus ? (
-            <DetailRow
-              label="Field Verification"
-              value={
-                complaint.fieldVerificationStatus === 'department_confirmed'
-                  ? 'Verified (Existing Dept Confirmed)'
-                  : complaint.fieldVerificationStatus === 'transferred'
-                  ? `Transferred to ${complaint.department}`
-                  : complaint.fieldVerificationStatus === 'verified'
-                  ? 'Verified'
-                  : 'Pending Verification'
-              }
-            />
-          ) : null}
-          {complaint.fieldVerificationRemarks ? (
-            <DetailRow label="Verification Remarks" value={complaint.fieldVerificationRemarks} />
-          ) : null}
-          <DetailRow
-            label="Routing Status"
-            value={complaint.routingStatus || (complaint.department !== 'Road Maintenance' ? 'Moved' : 'Direct')}
-          />
-          {complaint.originalDepartment && complaint.originalDepartment !== complaint.department ? (
-            <DetailRow label="Original Department" value={complaint.originalDepartment} />
-          ) : null}
-          {complaint.departmentSource ? (
-            <DetailRow
-              label="Department Source"
-              value={
-                complaint.departmentSource === 'description'
-                  ? 'Identified from Description'
-                  : complaint.departmentSource === 'field_inspector'
-                  ? 'Field Inspector Reassignment'
-                  : complaint.departmentSource === 'officer'
-                  ? 'Officer Reassignment'
-                  : 'AI Model'
-              }
-            />
-          ) : null}
-          <DetailRow
-            label="Location Coordinates"
-            value={`${complaint.latitude.toFixed(6)}, ${complaint.longitude.toFixed(6)}`}
-          />
-          <DetailRow label="Region" value={complaint.region || 'Gandhipuram'} />
-        </View>
-
-        {/* Dual Analysis Comparison: AI Initial Detection vs Field Inspector Verified (Only for Road Maintenance) */}
-        {isRoad ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Defect &amp; Verification Details</Text>
-
-            {/* AI Initial Box */}
-            <View style={styles.aiBox}>
-              <View style={styles.subHeaderRow}>
-                <Ionicons name="hardware-chip-outline" size={16} color={AppColors.primary} />
-                <Text style={styles.subHeader}>1. AI Initial Prediction (Preliminary)</Text>
-              </View>
-              <View style={styles.grid2}>
-                <View>
-                  <Text style={styles.gridLabel}>AI Defect Class</Text>
-                  <Text style={styles.gridVal}>{complaint.issueType.toUpperCase()}</Text>
-                </View>
-                <View>
-                  <Text style={styles.gridLabel}>Confidence</Text>
-                  <Text style={styles.gridVal}>{complaint.confidence}%</Text>
-                </View>
-              </View>
-              <View style={[styles.grid2, { marginTop: 8 }]}>
-                <View>
-                  <Text style={styles.gridLabel}>Priority / Severity</Text>
-                  <Text style={styles.gridVal}>{complaint.priority || complaint.severity || 'MEDIUM'}</Text>
-                </View>
-                <View>
-                  <Text style={styles.gridLabel}>Budget Estimation</Text>
-                  <Text style={[styles.gridVal, { color: '#0D9488' }]}>
-                    {complaint.inspectionDetails?.estimatedBudget || complaint.estimatedBudget
-                      ? `₹${(complaint.inspectionDetails?.estimatedBudget || complaint.estimatedBudget || 0).toLocaleString('en-IN')} (Field Verified)`
-                      : 'Pending Field Inspection'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Field Inspector Verified Box */}
-            {complaint.inspectionDetails ? (
-              <View style={styles.inspectorBox}>
-                <View style={styles.subHeaderRow}>
-                  <Ionicons name="shield-checkmark" size={16} color="#0D9488" />
-                  <Text style={[styles.subHeader, { color: '#0D9488' }]}>
-                    2. Field Inspector On-Site Verification (Approved)
+                <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                  <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Verified Issue</Text>
+                  <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                    {formatDisplayIssueName(complaint.inspectionDetails?.verifiedIssue || complaint.issueType)}
                   </Text>
                 </View>
 
-                <View style={styles.grid2}>
-                  <View>
-                    <Text style={styles.gridLabel}>Verified Issue</Text>
-                    <Text style={[styles.gridVal, { color: '#0D9488' }]}>
-                      {complaint.inspectionDetails.verifiedIssue.toUpperCase()}
-                    </Text>
-                  </View>
-                  <View>
-                    <Text style={styles.gridLabel}>Severity</Text>
-                    <Text style={[styles.gridVal, { color: '#C2410C' }]}>
-                      {complaint.inspectionDetails.severity}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={[styles.grid2, { marginTop: 8 }]}>
-                  <View>
-                    <Text style={styles.gridLabel}>Est. Resolution Time</Text>
-                    <Text style={styles.gridVal}>
-                      {complaint.inspectionDetails.estimatedResolutionDays} Days (Max 7d)
-                    </Text>
-                  </View>
-                  <View>
-                    <Text style={styles.gridLabel}>Manually Estimated Budget</Text>
-                    <Text style={[styles.gridVal, { color: '#0F766E', fontWeight: '800' }]}>
-                      ₹{complaint.inspectionDetails.estimatedBudget.toLocaleString('en-IN')}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={{ marginTop: 10 }}>
-                  <PracticalBudgetBreakdownCard
-                    budgetBreakdown={complaint.inspectionDetails.budgetBreakdown || complaint.budgetBreakdown}
-                    issueType={complaint.inspectionDetails.verifiedIssue}
-                    severity={complaint.inspectionDetails.severity}
-                    estimatedBudget={complaint.inspectionDetails.estimatedBudget}
-                    estimatedBudgetDesc={complaint.inspectionDetails.budgetBreakdown?.description}
-                    title="Inspector Verified Budget & Resource Allocation"
-                    showBoqToggle={true}
-                    initiallyExpanded={false}
-                  />
-                </View>
-
-                <View style={styles.roadDetailRow}>
-                  <Text style={styles.gridLabel}>Identified Road / Sector:</Text>
-                  <Text style={styles.roadNameText}>{complaint.inspectionDetails.roadName}</Text>
-                </View>
-
-                <View style={styles.roadDetailRow}>
-                  <Text style={styles.gridLabel}>Routed Maintenance Authority:</Text>
-                  <Text style={styles.authorityText}>
-                    {complaint.inspectionDetails.maintenanceAuthority}
+                <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                  <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Inspector</Text>
+                  <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                    {complaint.inspectionDetails?.inspectedByName || complaint.fieldVerifiedBy || 'Field Inspector'}
                   </Text>
                 </View>
 
-                {complaint.inspectionDetails.isOtherDeptInvolved && complaint.inspectionDetails.involvedDepartments?.length ? (
-                  <View style={styles.multiDeptBox}>
-                    <Ionicons name="git-network-outline" size={14} color="#B45309" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.multiDeptTitle}>Secondary Department Involved:</Text>
-                      <Text style={styles.multiDeptVal}>
-                        {complaint.inspectionDetails.involvedDepartments.join(', ')}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
-
-                {complaint.inspectionDetails.inspectorRemarks ? (
-                  <View style={styles.remarksWrap}>
-                    <Text style={styles.gridLabel}>Inspector On-Site Observations:</Text>
-                    <Text style={styles.remarksText}>
-                      &ldquo;{complaint.inspectionDetails.inspectorRemarks}&rdquo;
+                {complaint.fieldVerifiedAt || complaint.inspectionDetails?.inspectedAt ? (
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Inspection Date</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {(complaint.fieldVerifiedAt || complaint.inspectionDetails?.inspectedAt)?.toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
                     </Text>
                   </View>
                 ) : null}
 
-                {(complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl) ? (
+                {complaint.inspectorRemarks || complaint.inspectionDetails?.inspectorRemarks ? (
                   <View style={{ marginTop: 10 }}>
-                    <Text style={styles.gridLabel}>Field Inspector Observation Photo:</Text>
-                    <CivicImage
-                      uri={complaint.inspectionEvidenceUrl || (complaint as any).inspectionDetails?.inspectionEvidenceUrl}
-                      style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }}
-                      resizeMode="cover"
-                    />
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary, marginBottom: 4 }]}>Inspector Remarks:</Text>
+                    <Text style={[styles.descriptionText, { color: colors.textPrimary }]}>
+                      {complaint.inspectorRemarks || complaint.inspectionDetails?.inspectorRemarks}
+                    </Text>
                   </View>
                 ) : null}
-              </View>
-            ) : (
-              <View style={styles.pendingInspectorNotice}>
-                <Ionicons name="hourglass-outline" size={18} color="#B45309" />
-                <Text style={styles.pendingInspectorText}>
-                  Awaiting Field Inspector on-site verification to confirm defect, manually estimate repair budget in ₹, and route to executing authority.
-                </Text>
-              </View>
+
+                {complaint.inspectionEvidenceUrl ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary, marginBottom: 6 }]}>Inspection Evidence Photo:</Text>
+                    <CivicImage uri={complaint.inspectionEvidenceUrl} style={styles.evidenceImage} resizeMode="cover" />
+                  </View>
+                ) : null}
+              </GradientCard>
+            )}
+
+            {/* Resolution Details Card */}
+            {complaint.resolutionDetails && (
+              <GradientCard style={styles.card}>
+                <View style={styles.cardHeaderFlex}>
+                  <Ionicons name="checkmark-done-circle-outline" size={20} color={AppColors.success} />
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Repair Resolution Progress</Text>
+                </View>
+
+                <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                  <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Resolved By</Text>
+                  <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                    {complaint.resolutionDetails.resolvedByName || 'Maintenance Division'}
+                  </Text>
+                </View>
+
+                {complaint.resolutionDetails.contractorName ? (
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Contractor / Wing</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.resolutionDetails.contractorName}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {complaint.resolutionDetails.resolutionRemarks ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary, marginBottom: 4 }]}>Resolution Remarks:</Text>
+                    <Text style={[styles.descriptionText, { color: colors.textPrimary }]}>
+                      {complaint.resolutionDetails.resolutionRemarks}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {complaint.resolutionDetails.afterRepairImageUri ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary, marginBottom: 6 }]}>After-Repair Proof:</Text>
+                    <CivicImage uri={complaint.resolutionDetails.afterRepairImageUri} style={styles.evidenceImage} resizeMode="cover" />
+                  </View>
+                ) : null}
+              </GradientCard>
             )}
           </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Department Processing Details</Text>
-            <View style={styles.aiBox}>
-              <View style={styles.subHeaderRow}>
-                <Ionicons name="business-outline" size={16} color={AppColors.primary} />
-                <Text style={styles.subHeader}>Routed Department Management</Text>
-              </View>
-              <Text style={{ fontSize: 13, color: AppColors.textSecondary, marginTop: 6, lineHeight: 18 }}>
-                {complaint.routingMessage || `This complaint is routed to ${complaint.department || complaint.responsibleDepartment} for departmental action and is managed outside the Road Maintenance lifecycle.`}
-              </Text>
-              <View style={[styles.grid2, { marginTop: 12 }]}>
-                <View>
-                  <Text style={styles.gridLabel}>Routed Department</Text>
-                  <Text style={styles.gridVal}>{complaint.department || complaint.responsibleDepartment}</Text>
-                </View>
-                <View>
-                  <Text style={styles.gridLabel}>Routing Status</Text>
-                  <Text style={[styles.gridVal, { color: '#0284C7' }]}>{complaint.routingStatus || 'Moved'}</Text>
-                </View>
-              </View>
-            </View>
-          </View>
         )}
 
-        {/* Lifecycle Interactive Timeline (Only for Road Maintenance) */}
-        {isRoad && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Complaint Lifecycle Tracker</Text>
-            <View style={styles.timeline}>
-              {TIMELINE_STEPS.map((step, idx) => {
-                const isPast = idx < currentTimelineIndex;
-                const isCurrent = idx === currentTimelineIndex;
-                const isLast = idx === TIMELINE_STEPS.length - 1;
+        {/* ========================================================================= */}
+        {/* TAB 3: BUDGET                                                             */}
+        {/* ========================================================================= */}
+        {activeTab === 'budget' && (
+          <View style={styles.tabContentContainer}>
+            {hasBudgetInfo ? (
+              <>
+                {/* Total Estimated Budget Banner */}
+                <GradientCard style={styles.budgetHeroCard}>
+                  <Text style={[styles.budgetHeroLabel, { color: isDark ? '#065F46' : '#065F46' }]}>Estimated Repair Budget</Text>
+                  <Text style={[styles.budgetHeroAmount, { color: '#047857' }]}>
+                    ₹{budgetAmount.toLocaleString('en-IN')}
+                  </Text>
+                  <Text style={[styles.budgetHeroSub, { color: colors.textSecondary }]}>
+                    {complaint.estimatedBudgetDesc || complaint.inspectionDetails?.estimatedBudgetDesc || 'Assessed based on municipal standard schedule of rates'}
+                  </Text>
+                </GradientCard>
 
-                return (
-                  <View key={step.key} style={styles.timelineItem}>
-                    <View style={styles.timelineLeft}>
-                      <View
-                        style={[
-                          styles.timelineDot,
-                          isPast && styles.timelineDotDone,
-                          isCurrent && styles.timelineDotCurrent,
-                        ]}
-                      >
-                        <Ionicons
-                          name={isPast ? 'checkmark' : step.icon}
-                          size={12}
-                          color={isPast || isCurrent ? AppColors.white : AppColors.placeholder}
-                        />
-                      </View>
-                      {!isLast && (
-                        <View
-                          style={[
-                            styles.timelineLine,
-                            isPast && styles.timelineLineDone,
-                          ]}
-                        />
-                      )}
-                    </View>
-                    <View style={styles.timelineContent}>
-                      <Text
-                        style={[
-                          styles.timelineTitle,
-                          (isPast || isCurrent) && styles.timelineTitleActive,
-                        ]}
-                      >
-                        {step.label}
-                      </Text>
-                      <Text style={styles.timelineDesc}>{step.desc}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* Complete Audit History */}
-        {complaint.statusHistory && complaint.statusHistory.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Status Audit Log</Text>
-            {complaint.statusHistory.map((item, idx) => (
-              <View key={item.id || idx} style={styles.historyRow}>
-                <View style={styles.historyBullet} />
-                <View style={{ flex: 1 }}>
-                  <View style={styles.historyTop}>
-                    <Text style={styles.historyStatus}>{item.newStatus}</Text>
-                    <Text style={styles.historyDate}>
-                      {item.timestamp instanceof Date ? item.timestamp.toLocaleDateString('en-IN') : 'Recent'}
+                {/* Timeline and Cost Parameters */}
+                <GradientCard style={styles.card}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Cost &amp; Schedule Parameters</Text>
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Estimated Duration</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.estimatedResolutionDuration || '3 Days'}
                     </Text>
                   </View>
-                  {item.remarks ? <Text style={styles.historyRemarks}>{item.remarks}</Text> : null}
-                  <Text style={styles.historyBy}>Updated by: {item.updatedByName}</Text>
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Expected Completion</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.expectedResolutionDate ? formatResolutionDate(complaint.expectedResolutionDate) : 'Scheduled after inspection'}
+                    </Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Approval Status</Text>
+                    <View style={styles.approvedPill}>
+                      <Ionicons name="checkmark-circle" size={13} color="#059669" />
+                      <Text style={styles.approvedPillText}>Sanctioned</Text>
+                    </View>
+                  </View>
+                </GradientCard>
+
+                {/* Itemized Budget Breakdown Card */}
+                {(complaint.budgetBreakdown || complaint.inspectionDetails?.budgetBreakdown) ? (
+                  <PracticalBudgetBreakdownCard
+                    budgetBreakdown={complaint.budgetBreakdown || complaint.inspectionDetails?.budgetBreakdown}
+                    severity={complaint.severity || 'MEDIUM'}
+                    issueType={complaint.issueType}
+                    estimatedBudget={complaint.estimatedBudget || complaint.inspectionDetails?.estimatedBudget}
+                  />
+                ) : null}
+              </>
+            ) : (
+              /* When Budget is Not Yet Available */
+              <GradientCard style={[styles.card, styles.emptyBudgetCard]}>
+                <View style={[styles.emptyBudgetIconWrap, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.9)' : '#CCFBF1' }]}>
+                  <Ionicons name="calculator-outline" size={44} color="#0D9488" />
                 </View>
-              </View>
-            ))}
+                <Text style={[styles.emptyBudgetTitle, { color: colors.textPrimary }]}>
+                  Budget estimate not available yet.
+                </Text>
+                <Text style={[styles.emptyBudgetMsg, { color: colors.textSecondary }]}>
+                  The repair budget, itemized materials, and labor costs will be calculated and approved following the physical on-site inspection by the Field Inspector.
+                </Text>
+                <View style={[styles.emptyBudgetStatusBadge, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Ionicons name="time-outline" size={14} color={isDark ? AppColors.primary : AppColors.primary} />
+                  <Text style={[styles.emptyBudgetStatusText, { color: colors.textPrimary }]}>
+                    Status: Pending Field Inspection Assessment
+                  </Text>
+                </View>
+              </GradientCard>
+            )}
+          </View>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB 4: DEPARTMENT DETAILS                                                 */}
+        {/* ========================================================================= */}
+        {activeTab === 'department' && (
+          <View style={styles.tabContentContainer}>
+            {!hasDepartmentInfo ? (
+              /* When Department is Not Yet Available */
+              <GradientCard style={[styles.card, styles.emptyBudgetCard]}>
+                <View style={[styles.emptyBudgetIconWrap, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.9)' : '#E0F2FE' }]}>
+                  <Ionicons name="business-outline" size={44} color={AppColors.primary} />
+                </View>
+                <Text style={[styles.emptyBudgetTitle, { color: colors.textPrimary }]}>
+                  Department details not available yet.
+                </Text>
+                <Text style={[styles.emptyBudgetMsg, { color: colors.textSecondary }]}>
+                  The designated department, jurisdictional authority, and responsible municipal officers will be assigned once the complaint is verified and routed.
+                </Text>
+                <View style={[styles.emptyBudgetStatusBadge, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.75)' : '#F1F5F9', borderColor: isDark ? 'rgba(23, 32, 42, 0.15)' : colors.border }]}>
+                  <Ionicons name="time-outline" size={14} color={AppColors.primary} />
+                  <Text style={[styles.emptyBudgetStatusText, { color: colors.textPrimary }]}>
+                    Status: Pending Department Routing
+                  </Text>
+                </View>
+              </GradientCard>
+            ) : (
+              <>
+                {/* Assigned Department Info */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderFlex}>
+                    <Ionicons name="business-outline" size={18} color={AppColors.primary} />
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Assigned Department</Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Department</Text>
+                    <Text style={[styles.rowValueHighlight, { color: AppColors.primary }]}>
+                      {departmentName}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Department Code</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.departmentCode || 'ROAD'}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Jurisdiction</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      Coimbatore City Municipal Corporation (CCMC)
+                    </Text>
+                  </View>
+
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Routing Status</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      {complaint.routingStatus || 'Direct'}
+                    </Text>
+                  </View>
+                </GradientCard>
+
+                {/* Assigned Officer Details */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderFlex}>
+                    <Ionicons name="person-circle-outline" size={18} color={AppColors.primary} />
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Assigned Municipal Officer</Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Officer Name</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      {assignedOfficerName || complaint.assignedOfficerName || (complaint as any).officerName || 'Awaiting Assignment'}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Role / Designation</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      Assistant Executive Engineer (AEE)
+                    </Text>
+                  </View>
+
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Assignment State</Text>
+                    <Text style={[styles.rowValue, { color: AppColors.primary, fontWeight: '600' }]}>
+                      {complaint.assignedAt ? 'Officially Assigned' : 'Queued for Assignment'}
+                    </Text>
+                  </View>
+                </GradientCard>
+
+                {/* Field Inspector Details */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderFlex}>
+                    <Ionicons name="shield-outline" size={18} color="#0D9488" />
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Field Inspector</Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Designated Inspector</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      {complaint.inspectionDetails?.inspectedByName || complaint.fieldVerifiedBy || complaint.assignedInspectorName || 'Awaiting Field Inspector Assignment'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Inspection Wing</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      CCMC Field Inspection &amp; Rapid Audit Division
+                    </Text>
+                  </View>
+                </GradientCard>
+
+                {/* Multi-Department Involvement (if applicable) */}
+                {(complaint.isOtherDeptInvolved || (complaint.involvedDepartments && complaint.involvedDepartments.length > 0)) && (
+                  <GradientCard style={styles.card}>
+                    <View style={styles.cardHeaderFlex}>
+                      <Ionicons name="git-network-outline" size={18} color="#B45309" />
+                      <Text style={[styles.cardTitle, { color: '#B45309' }]}>Joint Department Involvement</Text>
+                    </View>
+                    <Text style={{ fontSize: 13, color: colors.textPrimary, lineHeight: 18, marginTop: 4 }}>
+                      This complaint involves secondary coordination with:{' '}
+                      <Text style={{ fontWeight: '700' }}>{complaint.involvedDepartments?.join(', ')}</Text>.
+                    </Text>
+                    {complaint.otherDeptReason ? (
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
+                        Coordination note: {complaint.otherDeptReason}
+                      </Text>
+                    ) : null}
+                  </GradientCard>
+                )}
+
+                {/* Official Contact & Grievance Helpline */}
+                <GradientCard style={styles.card}>
+                  <View style={styles.cardHeaderFlex}>
+                    <Ionicons name="call-outline" size={18} color={AppColors.primary} />
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Official Department Helpline</Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Toll-Free Helpline</Text>
+                    <Text style={[styles.rowValue, { color: AppColors.primary, fontWeight: '700' }]}>
+                      1800-425-4321
+                    </Text>
+                  </View>
+
+                  <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(23, 32, 42, 0.12)' : colors.border }]}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Control Room</Text>
+                    <Text style={[styles.rowValue, { color: colors.textPrimary }]}>
+                      0422-2302323
+                    </Text>
+                  </View>
+
+                  <View style={styles.row}>
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Operating Hours</Text>
+                    <Text style={[styles.rowValue, { color: colors.textSecondary }]}>
+                      Mon - Sat: 9:00 AM - 6:00 PM
+                    </Text>
+                  </View>
+                </GradientCard>
+              </>
+            )}
           </View>
         )}
       </ScrollView>
@@ -742,555 +1003,19 @@ export default function ComplaintDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: AppColors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    backgroundColor: AppColors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: AppColors.border,
-  },
-  headerTitleWrap: { alignItems: 'center' },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: AppColors.textPrimary },
-  headerSub: { fontSize: 11, color: AppColors.textSecondary },
-  scroll: { padding: 18, paddingBottom: 40 },
-  image: {
-    width: '100%',
-    height: 220,
-    borderRadius: 16,
-    marginBottom: 16,
-  },
-  statusCard: {
-    backgroundColor: AppColors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  issueHeading: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: AppColors.textPrimary,
-    textTransform: 'capitalize',
-  },
-  dateText: {
-    fontSize: 12,
-    color: AppColors.textSecondary,
-    marginTop: 2,
-  },
-  description: {
-    fontSize: 14,
-    color: AppColors.textPrimary,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  locationChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  locationText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: AppColors.primary,
-  },
-  routingBannerCard: {
-    backgroundColor: '#F0F9FF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#BAE6FD',
-  },
-  routingBannerHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 8,
-  },
-  routingBannerTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0369A1',
-    marginBottom: 3,
-  },
-  routingBannerMessage: {
-    fontSize: 13,
-    color: '#0C4A6E',
-    lineHeight: 18,
-  },
-  routingMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E0F2FE',
-  },
-  routingBadge: {
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  routingBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#0284C7',
-  },
-  routingOriginalText: {
-    fontSize: 12,
-    color: AppColors.textSecondary,
-    fontWeight: '500',
-  },
-  multiDeptBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#FFFBEB',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#FDE68A',
-  },
-  multiDeptBannerTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#92400E',
-  },
-  multiDeptBannerText: {
-    fontSize: 12,
-    color: '#B45309',
-    marginTop: 2,
-    lineHeight: 17,
-  },
-  resolutionCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#BBF7D0',
-  },
-  resolutionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  resolutionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#15803D',
-  },
-  resolutionSub: {
-    fontSize: 12,
-    color: '#166534',
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  resolutionInfoBox: {
-    backgroundColor: '#FFFFFF',
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    gap: 8,
-  },
-  resolutionMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
-  },
-  resolutionMetaLabel: {
-    fontSize: 12,
-    color: AppColors.textSecondary,
-    fontWeight: '600',
-  },
-  resolutionMetaValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-  },
-  resolvedStatusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#6EE7B7',
-  },
-  resolvedStatusChipText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  resolutionRemarksWrap: {
-    marginTop: 4,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  resolutionRemarksText: {
-    fontSize: 13,
-    color: AppColors.textPrimary,
-    lineHeight: 18,
-    marginTop: 3,
-  },
-  afterRepairWrap: {
-    marginTop: 8,
-  },
-  afterRepairImage: {
-    width: '100%',
-    height: 160,
-    borderRadius: 10,
-    marginTop: 6,
-  },
-  rejectedBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#FEF2F2',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  rejectedTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.error,
-  },
-  rejectedText: {
-    fontSize: 12,
-    color: '#991B1B',
-    marginTop: 2,
-  },
-  reopenedBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#FFF1F2',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-  },
-  reopenedTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#E11D48',
-  },
-  reopenedText: {
-    fontSize: 12,
-    color: '#9F1239',
-    marginTop: 2,
-  },
-  descCard: {
-    backgroundColor: AppColors.surface,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-    ...Platform.select({
-      web: {
-        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.04)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 2 },
-        elevation: 1,
-      },
-    }),
-  },
-  descCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  descCardTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
-  descCardBody: {
-    fontSize: 14,
-    color: AppColors.textPrimary,
-    lineHeight: 20,
-  },
-  card: {
-    backgroundColor: AppColors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: AppColors.textPrimary,
-    marginBottom: 12,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 7,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: AppColors.border,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: AppColors.textSecondary,
-    fontWeight: '500',
-    flexShrink: 1,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-    maxWidth: '65%',
-    textAlign: 'right',
-    flexShrink: 1,
-  },
-  aiBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  inspectorBox: {
-    backgroundColor: '#F0FDFA',
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#CCFBF1',
-  },
-  subHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.06)',
-    paddingBottom: 4,
-  },
-  subHeader: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: AppColors.primary,
-  },
-  grid2: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  gridLabel: {
-    fontSize: 11,
-    color: AppColors.textSecondary,
-  },
-  gridVal: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-    marginTop: 1,
-  },
-  roadDetailRow: {
-    marginTop: 6,
-  },
-  roadNameText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-  },
-  authorityText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#0D9488',
-  },
-  multiDeptBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFBEB',
-    padding: 8,
-    borderRadius: 6,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  multiDeptTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#92400E',
-  },
-  multiDeptVal: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#B45309',
-    marginTop: 1,
-  },
-  remarksWrap: {
-    marginTop: 8,
-    backgroundColor: '#CCFBF1',
-    padding: 8,
-    borderRadius: 6,
-  },
-  remarksText: {
-    fontSize: 12,
-    color: '#0F766E',
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  pendingInspectorNotice: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: '#FFFBEB',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  pendingInspectorText: {
-    fontSize: 12,
-    color: '#92400E',
-    lineHeight: 16,
+  safe: {
     flex: 1,
-  },
-  timeline: {
-    paddingVertical: 4,
-  },
-  timelineItem: {
-    flexDirection: 'row',
-    minHeight: 52,
-  },
-  timelineLeft: {
-    width: 24,
-    alignItems: 'center',
-  },
-  timelineDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: AppColors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timelineDotDone: {
-    backgroundColor: AppColors.success,
-  },
-  timelineDotCurrent: {
-    backgroundColor: AppColors.primary,
-  },
-  timelineLine: {
-    width: 2,
-    flex: 1,
-    backgroundColor: AppColors.border,
-    marginVertical: 2,
-  },
-  timelineLineDone: {
-    backgroundColor: AppColors.success,
-  },
-  timelineContent: {
-    flex: 1,
-    marginLeft: 12,
-    paddingBottom: 14,
-  },
-  timelineTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: AppColors.placeholder,
-  },
-  timelineTitleActive: {
-    color: AppColors.textPrimary,
-    fontWeight: '700',
-  },
-  timelineDesc: {
-    fontSize: 11,
-    color: AppColors.textSecondary,
-    marginTop: 2,
-  },
-  historyRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: AppColors.border,
-  },
-  historyBullet: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: AppColors.primary,
-    marginTop: 5,
-  },
-  historyTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  historyStatus: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textPrimary,
-  },
-  historyDate: {
-    fontSize: 11,
-    color: AppColors.textSecondary,
-  },
-  historyRemarks: {
-    fontSize: 12,
-    color: AppColors.textPrimary,
-    marginTop: 2,
-  },
-  historyBy: {
-    fontSize: 10,
-    color: AppColors.textSecondary,
-    marginTop: 2,
   },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 20,
   },
   errorText: {
     fontSize: 16,
-    color: AppColors.error,
     marginTop: 12,
+    fontWeight: '600',
   },
   backBtn: {
     marginTop: 16,
@@ -1300,18 +1025,262 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   backBtnText: {
-    color: AppColors.white,
+    color: '#FFFFFF',
     fontWeight: '700',
   },
-  aiAccuracyRow: {
+  header: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  backIconBtn: {
+    padding: 4,
+    marginRight: 8,
+  },
+  headerTitleWrap: {
+    flex: 1,
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  headerSub: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  deleteHeaderBtn: {
+    padding: 6,
+  },
+  tabBar: {
+    borderBottomWidth: 1,
+  },
+  tabScrollContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginRight: 6,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+    gap: 6,
+  },
+  activeTabBtn: {
+    // borderBottomColor set dynamically
+  },
+  tabBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  activeTabBtnText: {
+    fontWeight: '800',
+  },
+  scroll: {
+    paddingBottom: 40,
+  },
+  tabContentContainer: {
+    padding: 16,
+    gap: 12,
+  },
+  imageCard: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+  },
+  image: {
+    width: '100%',
+    height: 220,
+  },
+  evidenceImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  card: {
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  cardHeaderFlex: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 8,
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  aiAccuracyBadge: {
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  issueHeading: {
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 24,
+    marginBottom: 4,
+  },
+  reportedDateText: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  rowLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  rowValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'right',
+    flex: 1.5,
+  },
+  rowValueHighlight: {
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'right',
+    flex: 1.5,
+  },
+  priorityPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+  },
+  priorityPillText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  descriptionText: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  noticeBox: {
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+    borderWidth: 1,
+  },
+  noticeBoxText: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  metaGrid: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+  },
+  metaCol: {
+    flex: 1,
+  },
+  metaLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginBottom: 3,
+  },
+  metaVal: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  timelineList: {
+    marginTop: 6,
+  },
+  timelineItemRow: {
+    flexDirection: 'row',
+    minHeight: 64,
+  },
+  timelineIndicatorCol: {
+    width: 24,
+    alignItems: 'center',
+  },
+  timelineDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  timelineLine: {
+    width: 2,
+    flex: 1,
+    marginVertical: 2,
+  },
+  timelineContentCol: {
+    flex: 1,
+    paddingLeft: 12,
+    paddingBottom: 16,
+  },
+  timelineStatusTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  timelineDateText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  timelineActorText: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  timelineRemarksText: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  budgetHeroCard: {
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1.5,
+  },
+  budgetHeroLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  budgetHeroAmount: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#047857',
+    marginVertical: 4,
+  },
+  budgetHeroSub: {
+    fontSize: 12,
+    color: '#065F46',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  approvedPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -1319,67 +1288,50 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
   },
-  aiAccuracyBadgeText: {
-    fontSize: 11,
+  approvedPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  emptyBudgetCard: {
+    alignItems: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 20,
+  },
+  emptyBudgetIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#CCFBF1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyBudgetTitle: {
+    fontSize: 17,
     fontWeight: '800',
-    color: '#065F46',
+    textAlign: 'center',
+    marginBottom: 8,
   },
-  keywordChip: {
+  emptyBudgetMsg: {
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    maxWidth: 320,
+    marginBottom: 16,
+  },
+  emptyBudgetStatusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#F0F9FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-  },
-  keywordChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#0369A1',
-  },
-  mismatchBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    backgroundColor: '#FEF2F2',
-    padding: 16,
-    borderRadius: 14,
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-  },
-  mismatchTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#DC2626',
-    marginBottom: 4,
-  },
-  mismatchText: {
-    fontSize: 13,
-    color: '#7F1D1D',
-    lineHeight: 18,
-  },
-  mismatchNoticeBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     gap: 6,
-    backgroundColor: '#F8FAFC',
-    padding: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 8,
-    marginTop: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
   },
-  mismatchNoticeText: {
-    fontSize: 11,
-    color: '#475569',
-    lineHeight: 15,
-    flex: 1,
+  emptyBudgetStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
